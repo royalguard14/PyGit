@@ -13,19 +13,13 @@ CHECK_INTERVAL = 60
 
 
 def get_remote(path):
-    # Use GitHub's Contents API instead of raw.githubusercontent.com.
-    # This avoids stale raw CDN responses during live-update testing.
-    url = (
-        "https://api.github.com/repos/royalguard14/PyGit/contents/"
-        + path
-        + "?ref=main&_="
-        + str(time.time_ns())
-    )
+    # Use GitHub Raw instead of the GitHub Contents API.
+    # This avoids the unauthenticated GitHub API rate limit.
+    url = GITHUB_RAW + path + "?_=" + str(time.time_ns())
 
     request = urllib.request.Request(
         url,
         headers={
-            "Accept": "application/vnd.github+json",
             "User-Agent": "PyGit-Live",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
@@ -33,12 +27,7 @@ def get_remote(path):
     )
 
     with urllib.request.urlopen(request, timeout=10) as response:
-        data = json.loads(response.read().decode("utf-8"))
-
-    import base64
-
-    encoded = data["content"].replace("\n", "")
-    return base64.b64decode(encoded).decode("utf-8")
+        return response.read().decode("utf-8")
 
 
 def parse_version(version):
