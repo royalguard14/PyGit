@@ -3,7 +3,7 @@ import time
 
 def main():
 
-    print("5.0.7 ISTAP")
+    print("5.0.8 ISTAP")
 
 
 if __name__ == "__main__":
