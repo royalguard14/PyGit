@@ -372,11 +372,10 @@ def main():
             except Exception as e:
                 log(f"[PYGIT] Update check failed: {e}")
 
-            # Restart the application if it exits.
-            if process.poll() is not None:
-                log("[PYGIT] Application stopped.")
-                log("[PYGIT] Restarting local code...")
-                process = start_code(control)
+            # Do not restart a naturally exited application here.
+            # The supervisor only restarts code.py when a NEW GitHub
+            # version is detected. This prevents a short-lived test
+            # program from being repeatedly launched every 60 seconds.
 
     except KeyboardInterrupt:
         log("[PYGIT] Keyboard interrupt received. Stopping...")
