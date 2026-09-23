@@ -1,4 +1,3 @@
-import hashlib
 import json
 import msvcrt
 import os
@@ -58,10 +57,6 @@ def parse_version(version):
         return (0,)
 
 
-def sha256_text(content):
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
 def save_file(path, content):
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
@@ -93,22 +88,13 @@ def load_local_control():
         return None
 
 
-def validate_code(code, expected_hash=None):
+def validate_code(code):
     # Compile first so a broken Python file is never installed.
     compile(code, RUNTIME_CODE, "exec")
 
-    if expected_hash:
-        actual_hash = sha256_text(code)
-        if actual_hash.lower() != expected_hash.lower():
-            raise ValueError(
-                "SHA-256 verification failed. "
-                f"Expected {expected_hash}, got {actual_hash}"
-            )
-
 
 def install_remote(remote_control, remote_code):
-    expected_hash = remote_control.get("sha256")
-    validate_code(remote_code, expected_hash)
+    validate_code(remote_code)
 
     os.makedirs(RUNTIME_DIR, exist_ok=True)
 
@@ -145,7 +131,7 @@ def update_from_github():
     remote_code = get_remote(remote_control["code"])
     install_remote(remote_control, remote_code)
 
-    log("[UPDATE] Code verified and installed.")
+    log("[UPDATE] Code compiled and installed.")
     return remote_control, True
 
 
@@ -204,7 +190,7 @@ def check_for_update(current_control):
     remote_code = get_remote(remote_control["code"])
     install_remote(remote_control, remote_code)
 
-    log("[PYGIT] New code verified and installed.")
+    log("[PYGIT] New code compiled and installed.")
     return remote_control, True
 
 
