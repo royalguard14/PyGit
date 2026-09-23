@@ -1,4 +1,4 @@
 print("Hello from PyGit!")
-print("THIS IS VERSION 1.2.0!")
-print("LIVE UPDATE SUCCESS!")
-print("PyGit automatically downloaded and restarted this code from GitHub!")
+print("THIS IS VERSION 1.3.0!")
+print("🔥 LIVE UPDATE TEST PASSED!")
+print("No git pull was used for this update!")
