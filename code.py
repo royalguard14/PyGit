@@ -2,7 +2,6 @@ import time
 
 
 def main():
-
     print("5.0.11 ISTAP")
 
 
