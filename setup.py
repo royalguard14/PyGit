@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 import shutil
@@ -9,9 +8,7 @@ import time
 import urllib.error
 import urllib.request
 
-GITHUB_API = "https://api.github.com/repos/royalguard14/PyGit/contents/"
 GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
-GITHUB_BRANCH = "main"
 CHECK_INTERVAL = 60
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -44,39 +41,26 @@ def get_remote(path):
 
     request = urllib.request.Request(
         url,
-        headers={
-            "User-Agent": "PyGit-Live/4.0",
-        },
+        headers={"User-Agent": "PyGit-Live/4.0"},
     )
 
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            return response.read().decode("utf-8")
+
     except urllib.error.HTTPError as e:
         raise GitHubFetchError(
             f"GitHub returned HTTP {e.code} while fetching {path}"
         ) from e
+
     except urllib.error.URLError as e:
         raise GitHubFetchError(
             f"GitHub connection failed while fetching {path}: {e.reason}"
         ) from e
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+
+    except UnicodeDecodeError as e:
         raise GitHubFetchError(
-            f"Invalid GitHub response while fetching {path}: {e}"
-        ) from e
-
-    if data.get("type") != "file":
-        raise GitHubFetchError(f"GitHub path is not a file: {path}")
-
-    encoded = data.get("content")
-    if not encoded:
-        raise GitHubFetchError(f"GitHub returned no file content for {path}")
-
-    try:
-        return base64.b64decode(encoded).decode("utf-8")
-    except Exception as e:
-        raise GitHubFetchError(
-            f"Could not decode GitHub file {path}: {e}"
+            f"Invalid text response while fetching {path}: {e}"
         ) from e
 
 
@@ -253,7 +237,6 @@ def ensure_runtime():
     try:
         remote_requirements = get_remote("requirements.txt")
     except GitHubFetchError as e:
-        # requirements.txt is optional.
         if "HTTP 404" in str(e):
             remote_requirements = ""
         else:
@@ -298,10 +281,6 @@ def check_for_update(current_control):
     remote_version = remote_control["version"]
     local_version = current_control.get("version", "0.0.0")
 
-    # IMPORTANT:
-    # The 60-second check only reads control.json.
-    # If the version is the same (or older), do NOTHING.
-    # The running code.py is not downloaded and is not restarted.
     if not is_newer_version(remote_version, local_version):
         return current_control, False
 
@@ -333,7 +312,7 @@ def main():
 
     try:
         control = ensure_runtime()
-        # Always check GitHub once immediately after startup.
+
         try:
             new_control, updated = check_for_update(control)
 
@@ -351,9 +330,6 @@ def main():
         while True:
             time.sleep(CHECK_INTERVAL)
 
-            # Check the GitHub version first.
-            # If the version is unchanged, the running application
-            # continues untouched. No code.py download and no restart.
             try:
                 new_control, updated = check_for_update(control)
 
@@ -373,8 +349,7 @@ def main():
 
             # Do not restart a naturally exited application here.
             # The supervisor only restarts code.py when a NEW GitHub
-            # version is detected. This prevents a short-lived test
-            # program from being repeatedly launched every 60 seconds.
+            # version is detected.
 
     except KeyboardInterrupt:
         log("[PYGIT] Keyboard interrupt received. Stopping...")
