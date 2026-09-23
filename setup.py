@@ -37,11 +37,16 @@ def log(message):
 
 def get_remote(path):
     path = path.lstrip("/")
-    url = GITHUB_RAW + path
+    separator = "&" if "?" in path else "?"
+    url = GITHUB_RAW + path + f"{separator}_pygit={time.time_ns()}"
 
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "PyGit-Live/4.0"},
+        headers={
+            "User-Agent": "PyGit-Live/5.1",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
     )
 
     try:
@@ -221,35 +226,64 @@ def fetch_control():
     return remote_control
 
 
+def get_remote_requirements():
+    try:
+        return get_remote("requirements.txt")
+    except GitHubFetchError as e:
+        if "HTTP 404" in str(e):
+            return ""
+        raise
+
+
 def ensure_runtime():
     os.makedirs(RUNTIME_DIR, exist_ok=True)
 
-    control = load_local_control()
+    local_control = load_local_control()
 
-    if control and os.path.exists(RUNTIME_CODE):
-        return control
-
-    log("[PYGIT] No local runtime found. Downloading current GitHub version...")
-
-    remote_control = fetch_control()
-    remote_code = get_remote(remote_control["code"])
-
+    # Always check GitHub at startup. A locally installed runtime must
+    # never prevent the client from seeing a newer published version.
     try:
-        remote_requirements = get_remote("requirements.txt")
-    except GitHubFetchError as e:
-        if "HTTP 404" in str(e):
-            remote_requirements = ""
+        remote_control = fetch_control()
+
+        if (
+            local_control
+            and os.path.exists(RUNTIME_CODE)
+            and not is_newer_version(
+                remote_control["version"],
+                local_control.get("version", "0.0.0"),
+            )
+        ):
+            return local_control
+
+        if local_control:
+            log(
+                f"[PYGIT] Startup update detected: "
+                f"{local_control.get('version', 'unknown')} -> "
+                f"{remote_control['version']}"
+            )
         else:
+            log(
+                f"[PYGIT] No local runtime found. Installing "
+                f"version {remote_control['version']}..."
+            )
+
+        remote_code = get_remote(remote_control["code"])
+        remote_requirements = get_remote_requirements()
+
+        install_remote(
+            remote_control,
+            remote_code,
+            remote_requirements,
+        )
+
+        log(f"[PYGIT] Installed version {remote_control['version']}.")
+        return remote_control
+
+    except GitHubFetchError:
+        # If GitHub is unavailable, continue with an existing local runtime.
+        if local_control and os.path.exists(RUNTIME_CODE):
             raise
-
-    install_remote(
-        remote_control,
-        remote_code,
-        remote_requirements,
-    )
-
-    log(f"[PYGIT] Installed version {remote_control['version']}.")
-    return remote_control
+        raise
 
 
 def start_code(control):
@@ -288,14 +322,7 @@ def check_for_update(current_control):
     log("[PYGIT] Downloading new code...")
 
     remote_code = get_remote(remote_control["code"])
-
-    try:
-        remote_requirements = get_remote("requirements.txt")
-    except GitHubFetchError as e:
-        if "HTTP 404" in str(e):
-            remote_requirements = ""
-        else:
-            raise
+    remote_requirements = get_remote_requirements()
 
     install_remote(
         remote_control,
@@ -312,19 +339,6 @@ def main():
 
     try:
         control = ensure_runtime()
-
-        try:
-            new_control, updated = check_for_update(control)
-
-            if updated:
-                control = new_control
-
-        except GitHubFetchError as e:
-            log(f"[PYGIT] Initial GitHub check failed: {e}")
-
-        except Exception as e:
-            log(f"[PYGIT] Initial update check failed: {e}")
-
         process = start_code(control)
 
         while True:
