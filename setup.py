@@ -88,6 +88,10 @@ def parse_version(version):
         return (0,)
 
 
+def is_newer_version(remote_version, local_version):
+    return parse_version(remote_version) > parse_version(local_version)
+
+
 def save_file(path, content):
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
@@ -295,7 +299,11 @@ def check_for_update(current_control):
     remote_version = remote_control["version"]
     local_version = current_control.get("version", "0.0.0")
 
-    if parse_version(remote_version) <= parse_version(local_version):
+    # IMPORTANT:
+    # The 60-second check only reads control.json.
+    # If the version is the same (or older), do NOTHING.
+    # The running code.py is not downloaded and is not restarted.
+    if not is_newer_version(remote_version, local_version):
         return current_control, False
 
     log(f"[PYGIT] New version detected: {remote_version}")
@@ -317,7 +325,7 @@ def check_for_update(current_control):
         remote_requirements,
     )
 
-    log("[PYGIT] New code compiled and installed.")
+    log("[PYGIT] New code installed.")
     return remote_control, True
 
 
@@ -344,10 +352,9 @@ def main():
         while True:
             time.sleep(CHECK_INTERVAL)
 
-            # IMPORTANT:
-            # Check GitHub BEFORE restarting a stopped application.
-            # A short-lived test code.py must not prevent the updater
-            # from ever checking for a newer version.
+            # Check the GitHub version first.
+            # If the version is unchanged, the running application
+            # continues untouched. No code.py download and no restart.
             try:
                 new_control, updated = check_for_update(control)
 
