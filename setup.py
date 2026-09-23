@@ -9,7 +9,7 @@ import urllib.request
 GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
 LOCAL_CONTROL = "control.json"
 LOCAL_CODE = "code.txt"
-CHECK_INTERVAL = 5
+CHECK_INTERVAL = 60
 
 
 def get_remote(path):
