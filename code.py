@@ -35,105 +35,71 @@ def progress_bar(task_name, duration=2):
         time.sleep(duration / steps)
     print(f" {BOLD}{GREEN}SUCCESS{RESET}")
 
-def generate_hacker_alias():
-    prefixes = ["Neo", "Zero", "Phreak", "Byte", "Cipher", "Vortex", "Quantum", "Shadow"]
-    suffixes = ["Ghost", "Overlord", "Daemon", "Glitch", "Synapse", "Vector", "Echo"]
-    return f"{random.choice(prefixes)}_{random.choice(suffixes)}{random.randint(10, 99)}"
-
-def matrix_rain(duration=3):
-    end_time = time.time() + duration
-    symbols = ["0", "1", "X", "Y", "Ω", "µ", "§", "#", "$", "%", "&"]
-    print(GREEN)
-    while time.time() < end_time:
-        line = "".join(random.choice(symbols) + " " for _ in range(30))
-        print(f"   {line}")
-        time.sleep(0.05)
-    print(RESET)
-
-# --- ITO ANG MAGIC NG OVERLAY WINDOW ---
-def launch_overlay():
-    """Gumagawa ng transparent overlay sa top-right ng iyong monitor."""
+# --- FULL MONITOR CLICK-BLOCKING OVERLAY ---
+def launch_full_overlay():
+    """Gumagawa ng full-screen overlay na humaharang sa lahat ng mouse clicks."""
     root = tk.Tk()
-    root.overrideredirect(True)          # Tinatanggal ang window borders at title bar
-    root.attributes("-topmost", True)     # Pinupwersang laging nasa ibabaw ng lahat ng windows
+    root.overrideredirect(True)          # Tinatanggal ang window borders at taskbar blocks
+    root.attributes("-topmost", True)     # Pinupwersang laging nasa ibabaw ng lahat
     
-    # Gawing transparent ang background (Gumagana nang maayos sa Windows)
-    root.config(bg='black')
-    root.wm_attributes('-transparentcolor', 'black')
-    
-    # Alamin ang sukat ng iyong screen para mailagay sa eksaktong TOP-RIGHT
+    # Sakupin ang buong resolution ng monitor
     screen_width = root.winfo_screenwidth()
-    window_width = 300
-    window_height = 80
-    x_offset = screen_width - window_width - 20 # 20px allowance mula sa kanang dulo
-    y_offset = 20                               # 20px allowance mula sa itaas
+    screen_height = root.winfo_screenheight()
+    root.geometry(f"{screen_width}x{screen_height}+0+0")
     
-    root.geometry(f"{window_width}x{window_height}+{x_offset}+{y_offset}")
+    # Gawing bahagyang transparent ang buong window (0.3 = 30% opacity)
+    # Magmumukha itong tinted glass para kita pa rin ang desktop pero bawal i-click
+    root.configure(bg='black')
+    root.attributes("-alpha", 0.3)
     
-    # Ang disenyo ng "Hello World" text overlay
+    # Puwersahing makuha ng window na ito ang lahat ng focus para hindi ma-click ang likod
+    root.focus_force()
+    root.grab_set() 
+    
+    # Lagyan ng malaking "Hello World" label sa gitna ng screen
     label = tk.Label(
         root, 
         text="Hello world", 
-        font=("Consolas", 28, "bold"), 
+        font=("Consolas", 48, "bold"), 
         fg="#00FF00", # Neon Green
         bg="black"
     )
-    label.pack(expand=True)
+    label.place(relx=0.5, rely=0.5, anchor="center")
     
-    # Kusang magsasara pagkatapos ng 20 segundo (20000 milliseconds)
-    root.after(20000, root.destroy)
+    # Kusang magsasara pagkatapos ng 50 segundo (50000 milliseconds)
+    root.after(50000, root.destroy)
     root.mainloop()
 
 def main():
     clear_screen()
     
-    # Pinapatakbo ang overlay gamit ang Thread para hindi ma-freeze ang terminal program
-    overlay_thread = threading.Thread(target=launch_overlay, daemon=True)
+    # Patakbuhin ang full-screen barrier gamit ang Thread upang hindi ma-stuck ang terminal
+    overlay_thread = threading.Thread(target=launch_full_overlay, daemon=True)
     overlay_thread.start()
     
-    # 1. Terminal Header
-    print(f"{BOLD}{CYAN}" + "="*50)
-    print(f"       CORE_SYSTEM_OS v4.02 // INITIALIZATION     ")
+    # Terminal Execution (Habang naka-lock ang screen sa likod)
+    print(f"{BOLD}{RED}" + "="*50)
+    print(f"       SYSTEM LOCK INITIATED // FULL SCREEN BLOCK     ")
     print("="*50 + f"{RESET}\n")
     
     time.sleep(0.5)
-    typewriter("Connecting to secure node protocols...", color=YELLOW)
-    typewriter(f"{BOLD}{RED}[INFO] Top-right HUD Overlay activated for 20 seconds.{RESET}\n", delay=0.02)
+    typewriter("Deploying digital security perimeter...", color=YELLOW)
+    typewriter(f"{BOLD}{RED}[ALERT] Monitor click-lock active for 50 seconds.{RESET}\n", delay=0.02)
     
-    # 2. Loading Phase
-    progress_bar("Bypassing Firewall")
-    progress_bar("Injecting Py-Payload")
-    progress_bar("Establishing Handshake", duration=1.5)
+    # Kunwaring may ginagawang system diagnostic habang naka-lock
+    progress_bar("Securing Desktop Input")
+    progress_bar("Syncing Crypt Keys", duration=3)
+    progress_bar("Analyzing Threat Vector", duration=2)
     
-    print(f"\n{BOLD}{GREEN}[!] ACCESS GRANTED.{RESET}\n")
-    time.sleep(0.8)
+    print(f"\n{BOLD}{GREEN}[!] Main program running seamlessly in background.{RESET}")
+    print(f"{CYAN}Maghihintay ang terminal hanggang matapos ang 50 segundo ng overlay...{RESET}\n")
     
-    # 3. Interactive Input at Choice
-    alias = generate_hacker_alias()
-    typewriter(f"System assigned codename: {BOLD}{PURPLE}{alias}{RESET}", delay=0.05)
+    # Panatilihing buhay ang terminal hanggang kusang mamatay ang overlay thread
+    time.sleep(45) 
+    typewriter("Overlay termination sequence standby...", color=YELLOW)
+    time.sleep(5)
     
-    print(f"\n{BOLD}{CYAN}--- TERMINAL COMMAND OPTIONS ---{RESET}")
-    print(f"[{GREEN}1{RESET}] Execute Matrix Digital Rain View")
-    print(f"[{GREEN}2{RESET}] Self-Destruct Simulation")
-    print(f"[{GREEN}3{RESET}] Disconnect Safely")
-    
-    choice = input(f"\n{BOLD}{YELLOW}Select protocol number: {RESET}")
-    
-    if choice == "1":
-        clear_screen()
-        typewriter("Booting matrix stream data...", color=GREEN)
-        time.sleep(1)
-        matrix_rain(duration=4)
-        typewriter("\nStream paused. Goodbye, operative.", color=CYAN)
-    elif choice == "2":
-        clear_screen()
-        print(f"{BOLD}{RED}!!! CRITICAL ALARM: SELF-DESTRUCT INITIATED !!!{RESET}\n")
-        for i in range(5, 0, -1):
-            print(f"{RED}System collapsing in... {i}{RESET}")
-            time.sleep(1)
-        print(f"\n{BOLD}{RED}[CRASH] Connection terminated.{RESET}")
-    else:
-        typewriter("\nTerminating terminal cleanly. Safe travels.", color=CYAN)
+    print(f"\n{BOLD}{GREEN}[!] SYSTEM UNLOCKED. Control returned to user.{RESET}")
 
 if __name__ == "__main__":
     main()
