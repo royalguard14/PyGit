@@ -13,17 +13,32 @@ CHECK_INTERVAL = 5
 
 
 def get_remote(path):
-    # Cache-buster prevents GitHub's raw CDN from serving an older copy.
-    separator = "&" if "?" in path else "?"
-    url = GITHUB_RAW + path + separator + "_=" + str(time.time_ns())
+    # Use GitHub's Contents API instead of raw.githubusercontent.com.
+    # This avoids stale raw CDN responses during live-update testing.
+    url = (
+        "https://api.github.com/repos/royalguard14/PyGit/contents/"
+        + path
+        + "?ref=main&_="
+        + str(time.time_ns())
+    )
 
     request = urllib.request.Request(
         url,
-        headers={"Cache-Control": "no-cache", "Pragma": "no-cache"}
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "PyGit-Live",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
     )
 
     with urllib.request.urlopen(request, timeout=10) as response:
-        return response.read().decode("utf-8")
+        data = json.loads(response.read().decode("utf-8"))
+
+    import base64
+
+    encoded = data["content"].replace("\n", "")
+    return base64.b64decode(encoded).decode("utf-8")
 
 
 def parse_version(version):
