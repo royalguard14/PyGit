@@ -1,0 +1,5 @@
+# PyGit application dependencies
+# Add third-party packages here, one per line.
+# Example:
+# requests>=2.32.0
+# pyserial>=3.5
