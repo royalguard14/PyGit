@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 import shutil
@@ -9,8 +8,7 @@ import time
 import urllib.error
 import urllib.request
 
-GITHUB_API = "https://api.github.com/repos/royalguard14/PyGit/contents/"
-GITHUB_BRANCH = "main"
+GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
 CHECK_INTERVAL = 60
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,45 +37,35 @@ def log(message):
 
 def get_remote(path):
     path = path.lstrip("/")
-    url = GITHUB_API + path + "?ref=" + GITHUB_BRANCH
+    separator = "&" if "?" in path else "?"
+    url = GITHUB_RAW + path + f"{separator}_pygit={time.time_ns()}"
 
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "PyGit-Live/4.0",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "PyGit-Live/5.1",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         },
     )
 
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            return response.read().decode("utf-8")
+
     except urllib.error.HTTPError as e:
         raise GitHubFetchError(
             f"GitHub returned HTTP {e.code} while fetching {path}"
         ) from e
+
     except urllib.error.URLError as e:
         raise GitHubFetchError(
             f"GitHub connection failed while fetching {path}: {e.reason}"
         ) from e
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+
+    except UnicodeDecodeError as e:
         raise GitHubFetchError(
-            f"Invalid GitHub response while fetching {path}: {e}"
-        ) from e
-
-    if data.get("type") != "file":
-        raise GitHubFetchError(f"GitHub path is not a file: {path}")
-
-    encoded = data.get("content")
-    if not encoded:
-        raise GitHubFetchError(f"GitHub returned no file content for {path}")
-
-    try:
-        return base64.b64decode(encoded).decode("utf-8")
-    except Exception as e:
-        raise GitHubFetchError(
-            f"Could not decode GitHub file {path}: {e}"
+            f"Invalid text response while fetching {path}: {e}"
         ) from e
 
 
@@ -86,6 +74,10 @@ def parse_version(version):
         return tuple(int(x) for x in str(version).split("."))
     except (ValueError, AttributeError):
         return (0,)
+
+
+def is_newer_version(remote_version, local_version):
+    return parse_version(remote_version) > parse_version(local_version)
 
 
 def save_file(path, content):
@@ -234,36 +226,89 @@ def fetch_control():
     return remote_control
 
 
+def get_remote_requirements():
+    try:
+        return get_remote("requirements.txt")
+    except GitHubFetchError as e:
+        if "HTTP 404" in str(e):
+            return ""
+        raise
+
+
 def ensure_runtime():
     os.makedirs(RUNTIME_DIR, exist_ok=True)
 
-    control = load_local_control()
+    local_control = load_local_control()
 
-    if control and os.path.exists(RUNTIME_CODE):
-        return control
-
-    log("[PYGIT] No local runtime found. Downloading current GitHub version...")
-
-    remote_control = fetch_control()
-    remote_code = get_remote(remote_control["code"])
-
+    # Always check GitHub at startup. A locally installed runtime must
+    # never prevent the client from seeing a newer published version.
     try:
-        remote_requirements = get_remote("requirements.txt")
-    except GitHubFetchError as e:
-        # requirements.txt is optional.
-        if "HTTP 404" in str(e):
-            remote_requirements = ""
+        remote_control = fetch_control()
+
+        if local_control and os.path.exists(RUNTIME_CODE):
+            local_version = local_control.get("version", "0.0.0")
+            remote_version = remote_control["version"]
+
+            if not is_newer_version(remote_version, local_version):
+                # The control file can say the correct version while the
+                # actual code file is stale. Verify the code before trusting
+                # the local runtime.
+                remote_code = get_remote(remote_control["code"])
+
+                try:
+                    with open(RUNTIME_CODE, "r", encoding="utf-8") as f:
+                        local_code = f.read()
+                except OSError as e:
+                    raise RuntimeError(
+                        f"Unable to read local runtime code: {e}"
+                    ) from e
+
+                if local_code == remote_code:
+                    return local_control
+
+                log(
+                    f"[PYGIT] Runtime code mismatch for version "
+                    f"{remote_version}. Repairing local code..."
+                )
+                remote_requirements = get_remote_requirements()
+                install_remote(
+                    remote_control,
+                    remote_code,
+                    remote_requirements,
+                )
+                log(f"[PYGIT] Repaired version {remote_version}.")
+                return remote_control
+
+        if local_control:
+            log(
+                f"[PYGIT] Startup update detected: "
+                f"{local_control.get('version', 'unknown')} -> "
+                f"{remote_control['version']}"
+            )
         else:
-            raise
+            log(
+                f"[PYGIT] No local runtime found. Installing "
+                f"version {remote_control['version']}..."
+            )
 
-    install_remote(
-        remote_control,
-        remote_code,
-        remote_requirements,
-    )
+        remote_code = get_remote(remote_control["code"])
+        remote_requirements = get_remote_requirements()
 
-    log(f"[PYGIT] Installed version {remote_control['version']}.")
-    return remote_control
+        install_remote(
+            remote_control,
+            remote_code,
+            remote_requirements,
+        )
+
+        log(f"[PYGIT] Installed version {remote_control['version']}.")
+        return remote_control
+
+    except GitHubFetchError as e:
+        # If GitHub is unavailable, continue with an existing local runtime.
+        if local_control and os.path.exists(RUNTIME_CODE):
+            log(f"[PYGIT] Initial GitHub check failed; using local runtime: {e}")
+            return local_control
+        raise
 
 
 def start_code(control):
@@ -295,21 +340,14 @@ def check_for_update(current_control):
     remote_version = remote_control["version"]
     local_version = current_control.get("version", "0.0.0")
 
-    if parse_version(remote_version) <= parse_version(local_version):
+    if not is_newer_version(remote_version, local_version):
         return current_control, False
 
     log(f"[PYGIT] New version detected: {remote_version}")
     log("[PYGIT] Downloading new code...")
 
     remote_code = get_remote(remote_control["code"])
-
-    try:
-        remote_requirements = get_remote("requirements.txt")
-    except GitHubFetchError as e:
-        if "HTTP 404" in str(e):
-            remote_requirements = ""
-        else:
-            raise
+    remote_requirements = get_remote_requirements()
 
     install_remote(
         remote_control,
@@ -317,7 +355,7 @@ def check_for_update(current_control):
         remote_requirements,
     )
 
-    log("[PYGIT] New code compiled and installed.")
+    log("[PYGIT] New code installed.")
     return remote_control, True
 
 
@@ -326,28 +364,11 @@ def main():
 
     try:
         control = ensure_runtime()
-        # Always check GitHub once immediately after startup.
-        try:
-            new_control, updated = check_for_update(control)
-
-            if updated:
-                control = new_control
-
-        except GitHubFetchError as e:
-            log(f"[PYGIT] Initial GitHub check failed: {e}")
-
-        except Exception as e:
-            log(f"[PYGIT] Initial update check failed: {e}")
-
         process = start_code(control)
 
         while True:
             time.sleep(CHECK_INTERVAL)
 
-            # IMPORTANT:
-            # Check GitHub BEFORE restarting a stopped application.
-            # A short-lived test code.py must not prevent the updater
-            # from ever checking for a newer version.
             try:
                 new_control, updated = check_for_update(control)
 
@@ -365,11 +386,9 @@ def main():
             except Exception as e:
                 log(f"[PYGIT] Update check failed: {e}")
 
-            # Restart the application if it exits.
-            if process.poll() is not None:
-                log("[PYGIT] Application stopped.")
-                log("[PYGIT] Restarting local code...")
-                process = start_code(control)
+            # Do not restart a naturally exited application here.
+            # The supervisor only restarts code.py when a NEW GitHub
+            # version is detected.
 
     except KeyboardInterrupt:
         log("[PYGIT] Keyboard interrupt received. Stopping...")
