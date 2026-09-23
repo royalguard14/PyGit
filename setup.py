@@ -229,9 +229,23 @@ def install_missing_dependencies(code):
             continue
 
         try:
-            if importlib.util.find_spec(module) is None:
+            # Check the private runtime, not the PyInstaller build environment.
+            probe = subprocess.run(
+                get_python_command()
+                + [
+                    "-c",
+                    "import importlib.util,sys; "
+                    "sys.exit(0 if importlib.util.find_spec(sys.argv[1]) "
+                    "is not None else 1)",
+                    module,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if probe.returncode != 0:
                 missing.append(PACKAGE_MAP.get(module, module))
-        except (ImportError, ModuleNotFoundError, ValueError):
+        except Exception:
             missing.append(PACKAGE_MAP.get(module, module))
 
     if not missing:
