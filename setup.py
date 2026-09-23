@@ -229,11 +229,8 @@ def main():
                     process = start_code(control)
 
                 elif process.poll() is not None:
-                    log(
-                        f"[PYGIT] Application process exited "
-                        f"with code {process.returncode}."
-                    )
-                    log("[PYGIT] Supervisor remains running.")
+                    # The application ended normally. Keep PyGit silent.
+                    pass
 
             except (urllib.error.URLError, urllib.error.HTTPError) as e:
                 log(f"[PYGIT] GitHub check failed: {e}")
