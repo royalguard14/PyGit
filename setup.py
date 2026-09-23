@@ -1,5 +1,5 @@
+import base64
 import json
-import msvcrt
 import os
 import shutil
 import subprocess
@@ -9,7 +9,8 @@ import time
 import urllib.error
 import urllib.request
 
-GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
+GITHUB_API = "https://api.github.com/repos/royalguard14/PyGit/contents/"
+GITHUB_BRANCH = "main"
 CHECK_INTERVAL = 60
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,6 +20,10 @@ RUNTIME_CONTROL = os.path.join(RUNTIME_DIR, "control.json")
 RUNTIME_REQUIREMENTS = os.path.join(RUNTIME_DIR, "requirements.txt")
 BACKUP_CODE = os.path.join(RUNTIME_DIR, "code.previous.py")
 LOG_FILE = os.path.join(RUNTIME_DIR, "pygit.log")
+
+
+class GitHubFetchError(Exception):
+    pass
 
 
 def log(message):
@@ -34,21 +39,47 @@ def log(message):
 
 
 def get_remote(path):
-    # GitHub Raw is used instead of the GitHub Contents API.
-    # A cache-busting query keeps live-update testing responsive.
-    url = GITHUB_RAW + path.lstrip("/") + "?_=" + str(time.time_ns())
+    path = path.lstrip("/")
+    url = GITHUB_API + path + "?ref=" + GITHUB_BRANCH
 
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "PyGit-Live/2.5",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
+            "User-Agent": "PyGit-Live/4.0",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
         },
     )
 
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise GitHubFetchError(
+            f"GitHub returned HTTP {e.code} while fetching {path}"
+        ) from e
+    except urllib.error.URLError as e:
+        raise GitHubFetchError(
+            f"GitHub connection failed while fetching {path}: {e.reason}"
+        ) from e
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise GitHubFetchError(
+            f"Invalid GitHub response while fetching {path}: {e}"
+        ) from e
+
+    if data.get("type") != "file":
+        raise GitHubFetchError(f"GitHub path is not a file: {path}")
+
+    encoded = data.get("content")
+    if not encoded:
+        raise GitHubFetchError(f"GitHub returned no file content for {path}")
+
+    try:
+        return base64.b64decode(encoded).decode("utf-8")
+    except Exception as e:
+        raise GitHubFetchError(
+            f"Could not decode GitHub file {path}: {e}"
+        ) from e
 
 
 def parse_version(version):
@@ -101,12 +132,9 @@ def load_local_requirements():
 
 
 def get_python_command():
-    # When running normally, use the exact interpreter running PyGit.
     if not getattr(sys, "frozen", False):
         return [sys.executable]
 
-    # A future PyGit EXE still needs a real Python interpreter to run
-    # downloaded .py applications and their pip dependencies.
     python_exe = shutil.which("python")
     if python_exe:
         return [python_exe]
@@ -123,11 +151,9 @@ def get_python_command():
 def install_dependencies(requirements):
     requirements = requirements.strip()
 
-    # No third-party dependencies are required.
     if not requirements:
         if load_local_requirements().strip():
             save_file(RUNTIME_REQUIREMENTS, "")
-        log("[PYGIT] No external dependencies required.")
         return
 
     if requirements == load_local_requirements().strip():
@@ -176,12 +202,10 @@ def install_dependencies(requirements):
 
 
 def validate_code(code):
-    # Compile first so a broken Python file is never installed.
     compile(code, RUNTIME_CODE, "exec")
 
 
 def install_remote(remote_control, remote_code, requirements):
-    # Dependencies must be ready before the new application is installed.
     install_dependencies(requirements)
     validate_code(remote_code)
 
@@ -197,37 +221,18 @@ def install_remote(remote_control, remote_code, requirements):
     )
 
 
-def update_from_github():
-    remote_control = json.loads(get_remote("control.json"))
+def fetch_control():
+    try:
+        remote_control = json.loads(get_remote("control.json"))
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid control.json from GitHub: {e}") from e
 
     if "version" not in remote_control or "code" not in remote_control:
-        raise ValueError("Invalid control.json: version and code are required.")
+        raise RuntimeError(
+            "Invalid control.json: version and code are required."
+        )
 
-    remote_version = remote_control["version"]
-    local_control = load_local_control()
-    local_version = (
-        local_control.get("version", "0.0.0")
-        if local_control
-        else "0.0.0"
-    )
-
-    if parse_version(remote_version) <= parse_version(local_version):
-        return local_control, False
-
-    log(f"[UPDATE] {local_version} -> {remote_version}")
-    log("[UPDATE] Downloading new application code...")
-
-    remote_code = get_remote(remote_control["code"])
-    remote_requirements = get_remote("requirements.txt")
-
-    install_remote(
-        remote_control,
-        remote_code,
-        remote_requirements,
-    )
-
-    log("[UPDATE] Code compiled and installed.")
-    return remote_control, True
+    return remote_control
 
 
 def ensure_runtime():
@@ -236,33 +241,35 @@ def ensure_runtime():
     control = load_local_control()
 
     if control and os.path.exists(RUNTIME_CODE):
-        # Existing installations also get dependency updates if GitHub
-        # publishes a changed requirements.txt.
-        try:
-            remote_requirements = get_remote("requirements.txt")
-            install_dependencies(remote_requirements)
-        except Exception as e:
-            log(f"[PYGIT] Dependency check failed: {e}")
-
         return control
 
     log("[PYGIT] No local runtime found. Downloading current GitHub version...")
 
-    remote_control = json.loads(get_remote("control.json"))
+    remote_control = fetch_control()
     remote_code = get_remote(remote_control["code"])
-    remote_requirements = get_remote("requirements.txt")
+
+    try:
+        remote_requirements = get_remote("requirements.txt")
+    except GitHubFetchError as e:
+        # requirements.txt is optional.
+        if "HTTP 404" in str(e):
+            remote_requirements = ""
+        else:
+            raise
 
     install_remote(
         remote_control,
         remote_code,
         remote_requirements,
     )
+
+    log(f"[PYGIT] Installed version {remote_control['version']}.")
     return remote_control
 
 
 def start_code(control):
     log(f"[PYGIT] Running version {control['version']}")
-    log("[PYGIT] Press Q to quit.")
+    log("[PYGIT] Starting code.py...")
 
     return subprocess.Popen(
         get_python_command() + [RUNTIME_CODE],
@@ -284,7 +291,7 @@ def stop_code(process):
 
 
 def check_for_update(current_control):
-    remote_control = json.loads(get_remote("control.json"))
+    remote_control = fetch_control()
 
     remote_version = remote_control["version"]
     local_version = current_control.get("version", "0.0.0")
@@ -296,7 +303,14 @@ def check_for_update(current_control):
     log("[PYGIT] Downloading new code...")
 
     remote_code = get_remote(remote_control["code"])
-    remote_requirements = get_remote("requirements.txt")
+
+    try:
+        remote_requirements = get_remote("requirements.txt")
+    except GitHubFetchError as e:
+        if "HTTP 404" in str(e):
+            remote_requirements = ""
+        else:
+            raise
 
     install_remote(
         remote_control,
@@ -322,32 +336,28 @@ def main():
         process = start_code(control)
 
         while True:
-            # Check keyboard without blocking the application.
-            if os.name == "nt" and msvcrt.kbhit():
-                key = msvcrt.getwch()
-                if key.lower() == "q":
-                    log("[PYGIT] Q received. Shutting down...")
-                    stop_code(process)
-                    break
-
             time.sleep(CHECK_INTERVAL)
+
+            # Restart the application if it exits.
+            if process.poll() is not None:
+                log("[PYGIT] Application stopped.")
+                log("[PYGIT] Restarting local code...")
+                process = start_code(control)
+                continue
 
             try:
                 new_control, updated = check_for_update(control)
 
                 if updated:
                     log("[PYGIT] Restarting application...")
-
                     stop_code(process)
+
                     control = new_control
                     process = start_code(control)
 
-                elif process.poll() is not None:
-                    # The application ended normally. Keep PyGit silent.
-                    pass
-
-            except (urllib.error.URLError, urllib.error.HTTPError) as e:
+            except GitHubFetchError as e:
                 log(f"[PYGIT] GitHub check failed: {e}")
+
             except Exception as e:
                 log(f"[PYGIT] Update check failed: {e}")
 
@@ -357,8 +367,7 @@ def main():
 
     except Exception as e:
         log(f"[PYGIT] Startup failed: {e}")
-        if process:
-            stop_code(process)
+        stop_code(process)
 
 
 if __name__ == "__main__":
