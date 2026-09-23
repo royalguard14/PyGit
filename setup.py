@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 
 GITHUB_API = "https://api.github.com/repos/royalguard14/PyGit/contents/"
+GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
 GITHUB_BRANCH = "main"
 CHECK_INTERVAL = 60
 
@@ -39,14 +40,12 @@ def log(message):
 
 def get_remote(path):
     path = path.lstrip("/")
-    url = GITHUB_API + path + "?ref=" + GITHUB_BRANCH
+    url = GITHUB_RAW + path
 
     request = urllib.request.Request(
         url,
         headers={
             "User-Agent": "PyGit-Live/4.0",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
         },
     )
 
