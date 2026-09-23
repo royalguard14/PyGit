@@ -1,11 +1,15 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
+import time
 import urllib.request
 
 GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/"
 LOCAL_CONTROL = "control.json"
 LOCAL_CODE = "code.txt"
+CHECK_INTERVAL = 5
 
 
 def get_remote(path):
@@ -33,46 +37,122 @@ def save_file(path, content):
         raise
 
 
-def main():
-    print("Checking PyGit for updates...")
+def load_local_control():
+    if not os.path.exists(LOCAL_CONTROL):
+        return None
 
+    try:
+        with open(LOCAL_CONTROL, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def update_from_github():
     remote_control = json.loads(get_remote("control.json"))
     remote_version = remote_control["version"]
 
-    local_version = "0.0.0"
-    if os.path.exists(LOCAL_CONTROL):
-        try:
-            with open(LOCAL_CONTROL, "r", encoding="utf-8") as f:
-                local_control = json.load(f)
-            local_version = local_control.get("version", "0.0.0")
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    print(f"Local version:  {local_version}")
-    print(f"Remote version: {remote_version}")
+    local_control = load_local_control()
+    local_version = local_control.get("version", "0.0.0") if local_control else "0.0.0"
 
     if parse_version(remote_version) > parse_version(local_version):
-        print("Update available!")
-        print("Updating...")
+        print(f"\n[UPDATE] {local_version} -> {remote_version}")
+        print("[UPDATE] Downloading new code...")
 
         code = get_remote(remote_control["code"])
         save_file(LOCAL_CODE, code)
         save_file(LOCAL_CONTROL, json.dumps(remote_control, indent=2) + "\n")
 
-        print("Update complete.\n")
-    else:
-        print("Already up to date.\n")
+        print("[UPDATE] Update complete.")
+        return remote_control, True
 
-    with open(LOCAL_CODE, "r", encoding="utf-8") as f:
-        code = f.read()
+    return local_control or remote_control, False
 
-    with open(LOCAL_CONTROL, "r", encoding="utf-8") as f:
-        control = json.load(f)
 
-    print(f"Running PyGit version: {control['version']}")
-    print("Running local code...\n")
+def start_code(control):
+    print(f"\n[PYGIT] Running version {control['version']}")
+    print("[PYGIT] Press Q then ENTER to quit.\n")
 
-    exec(compile(code, control["code"], "exec"), {"__name__": "__main__"})
+    return subprocess.Popen(
+        [sys.executable, LOCAL_CODE],
+        cwd=os.path.dirname(os.path.abspath(__file__))
+    )
+
+
+def stop_code(process):
+    if process and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def main():
+    print("================================")
+    print("          PyGit Live")
+    print("================================")
+    print(f"Checking GitHub every {CHECK_INTERVAL} seconds...")
+    print("")
+
+    try:
+        control, updated = update_from_github()
+
+        if not os.path.exists(LOCAL_CODE):
+            code = get_remote(control["code"])
+            save_file(LOCAL_CODE, code)
+
+        if not os.path.exists(LOCAL_CONTROL):
+            save_file(LOCAL_CONTROL, json.dumps(control, indent=2) + "\n")
+
+        process = start_code(control)
+
+        while True:
+            time.sleep(CHECK_INTERVAL)
+
+            # Check whether the user wants to quit.
+            if os.name == "nt":
+                import msvcrt
+                if msvcrt.kbhit():
+                    key = msvcrt.getwch()
+                    if key.lower() == "q":
+                        print("\n[PYGIT] Q received. Shutting down...")
+                        stop_code(process)
+                        break
+
+            # Check GitHub for a newer version.
+            try:
+                remote_control = json.loads(get_remote("control.json"))
+                local_control = load_local_control() or {}
+                local_version = local_control.get("version", "0.0.0")
+                remote_version = remote_control["version"]
+
+                if parse_version(remote_version) > parse_version(local_version):
+                    print(f"\n[PYGIT] New version detected: {remote_version}")
+
+                    code = get_remote(remote_control["code"])
+                    save_file(LOCAL_CODE, code)
+                    save_file(LOCAL_CONTROL, json.dumps(remote_control, indent=2) + "\n")
+
+                    print("[PYGIT] New code downloaded.")
+                    print("[PYGIT] Restarting application...")
+
+                    stop_code(process)
+                    control = remote_control
+                    process = start_code(control)
+
+                else:
+                    print(".", end="", flush=True)
+
+            except Exception as e:
+                print(f"\n[PYGIT] Update check failed: {e}")
+
+    except KeyboardInterrupt:
+        print("\n[PYGIT] Stopping...")
+        try:
+            stop_code(process)
+        except UnboundLocalError:
+            pass
 
 
 if __name__ == "__main__":
