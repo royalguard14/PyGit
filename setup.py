@@ -16,6 +16,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNTIME_DIR = os.path.join(BASE_DIR, ".pygit_runtime")
 RUNTIME_CODE = os.path.join(RUNTIME_DIR, "code.py")
 RUNTIME_CONTROL = os.path.join(RUNTIME_DIR, "control.json")
+RUNTIME_REQUIREMENTS = os.path.join(RUNTIME_DIR, "requirements.txt")
 BACKUP_CODE = os.path.join(RUNTIME_DIR, "code.previous.py")
 LOG_FILE = os.path.join(RUNTIME_DIR, "pygit.log")
 
@@ -40,7 +41,7 @@ def get_remote(path):
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "PyGit-Live/2.0",
+            "User-Agent": "PyGit-Live/2.5",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
         },
@@ -88,12 +89,100 @@ def load_local_control():
         return None
 
 
+def load_local_requirements():
+    if not os.path.exists(RUNTIME_REQUIREMENTS):
+        return ""
+
+    try:
+        with open(RUNTIME_REQUIREMENTS, "r", encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def get_python_command():
+    # When running normally, use the exact interpreter running PyGit.
+    if not getattr(sys, "frozen", False):
+        return [sys.executable]
+
+    # A future PyGit EXE still needs a real Python interpreter to run
+    # downloaded .py applications and their pip dependencies.
+    python_exe = shutil.which("python")
+    if python_exe:
+        return [python_exe]
+
+    py_launcher = shutil.which("py")
+    if py_launcher:
+        return [py_launcher, "-3"]
+
+    raise RuntimeError(
+        "Python is required to run downloaded code and install dependencies."
+    )
+
+
+def install_dependencies(requirements):
+    requirements = requirements.strip()
+
+    # No third-party dependencies are required.
+    if not requirements:
+        if load_local_requirements().strip():
+            save_file(RUNTIME_REQUIREMENTS, "")
+        log("[PYGIT] No external dependencies required.")
+        return
+
+    if requirements == load_local_requirements().strip():
+        return
+
+    log("[PYGIT] Installing/updating application dependencies...")
+
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+
+    fd, temp_requirements = tempfile.mkstemp(
+        prefix=".pygit_requirements_",
+        dir=RUNTIME_DIR,
+        text=True,
+    )
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(requirements + "\n")
+
+        command = get_python_command() + [
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "-r",
+            temp_requirements,
+        ]
+
+        result = subprocess.run(
+            command,
+            cwd=BASE_DIR,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Dependency installation failed with exit code "
+                f"{result.returncode}."
+            )
+
+        save_file(RUNTIME_REQUIREMENTS, requirements + "\n")
+        log("[PYGIT] Dependencies ready.")
+
+    finally:
+        if os.path.exists(temp_requirements):
+            os.remove(temp_requirements)
+
+
 def validate_code(code):
     # Compile first so a broken Python file is never installed.
     compile(code, RUNTIME_CODE, "exec")
 
 
-def install_remote(remote_control, remote_code):
+def install_remote(remote_control, remote_code, requirements):
+    # Dependencies must be ready before the new application is installed.
+    install_dependencies(requirements)
     validate_code(remote_code)
 
     os.makedirs(RUNTIME_DIR, exist_ok=True)
@@ -129,7 +218,13 @@ def update_from_github():
     log("[UPDATE] Downloading new application code...")
 
     remote_code = get_remote(remote_control["code"])
-    install_remote(remote_control, remote_code)
+    remote_requirements = get_remote("requirements.txt")
+
+    install_remote(
+        remote_control,
+        remote_code,
+        remote_requirements,
+    )
 
     log("[UPDATE] Code compiled and installed.")
     return remote_control, True
@@ -141,14 +236,27 @@ def ensure_runtime():
     control = load_local_control()
 
     if control and os.path.exists(RUNTIME_CODE):
+        # Existing installations also get dependency updates if GitHub
+        # publishes a changed requirements.txt.
+        try:
+            remote_requirements = get_remote("requirements.txt")
+            install_dependencies(remote_requirements)
+        except Exception as e:
+            log(f"[PYGIT] Dependency check failed: {e}")
+
         return control
 
     log("[PYGIT] No local runtime found. Downloading current GitHub version...")
 
     remote_control = json.loads(get_remote("control.json"))
     remote_code = get_remote(remote_control["code"])
+    remote_requirements = get_remote("requirements.txt")
 
-    install_remote(remote_control, remote_code)
+    install_remote(
+        remote_control,
+        remote_code,
+        remote_requirements,
+    )
     return remote_control
 
 
@@ -157,7 +265,7 @@ def start_code(control):
     log("[PYGIT] Press Q to quit.")
 
     return subprocess.Popen(
-        [sys.executable, RUNTIME_CODE],
+        get_python_command() + [RUNTIME_CODE],
         cwd=BASE_DIR,
     )
 
@@ -188,7 +296,13 @@ def check_for_update(current_control):
     log("[PYGIT] Downloading new code...")
 
     remote_code = get_remote(remote_control["code"])
-    install_remote(remote_control, remote_code)
+    remote_requirements = get_remote("requirements.txt")
+
+    install_remote(
+        remote_control,
+        remote_code,
+        remote_requirements,
+    )
 
     log("[PYGIT] New code compiled and installed.")
     return remote_control, True
