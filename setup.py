@@ -333,18 +333,28 @@ def main():
 
     try:
         control = ensure_runtime()
+        # Always check GitHub once immediately after startup.
+        try:
+            new_control, updated = check_for_update(control)
+
+            if updated:
+                control = new_control
+
+        except GitHubFetchError as e:
+            log(f"[PYGIT] Initial GitHub check failed: {e}")
+
+        except Exception as e:
+            log(f"[PYGIT] Initial update check failed: {e}")
+
         process = start_code(control)
 
         while True:
             time.sleep(CHECK_INTERVAL)
 
-            # Restart the application if it exits.
-            if process.poll() is not None:
-                log("[PYGIT] Application stopped.")
-                log("[PYGIT] Restarting local code...")
-                process = start_code(control)
-                continue
-
+            # IMPORTANT:
+            # Check GitHub BEFORE restarting a stopped application.
+            # A short-lived test code.py must not prevent the updater
+            # from ever checking for a newer version.
             try:
                 new_control, updated = check_for_update(control)
 
@@ -354,12 +364,19 @@ def main():
 
                     control = new_control
                     process = start_code(control)
+                    continue
 
             except GitHubFetchError as e:
                 log(f"[PYGIT] GitHub check failed: {e}")
 
             except Exception as e:
                 log(f"[PYGIT] Update check failed: {e}")
+
+            # Restart the application if it exits.
+            if process.poll() is not None:
+                log("[PYGIT] Application stopped.")
+                log("[PYGIT] Restarting local code...")
+                process = start_code(control)
 
     except KeyboardInterrupt:
         log("[PYGIT] Keyboard interrupt received. Stopping...")
