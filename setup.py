@@ -1,6 +1,5 @@
 import ast
 import ctypes
-import importlib.util
 import json
 import os
 import shutil
@@ -35,7 +34,6 @@ PYTHON_EXE = os.path.join(PYTHON_RUNTIME_DIR, "python.exe")
 PYTHONW_EXE = os.path.join(PYTHON_RUNTIME_DIR, "pythonw.exe")
 INSTALLED_EXE = os.path.join(APP_DIR, "PyGit.exe")
 
-# Import name -> PyPI package name for the common cases where they differ.
 PACKAGE_MAP = {
     "PIL": "Pillow",
     "cv2": "opencv-python",
@@ -45,20 +43,19 @@ PACKAGE_MAP = {
     "sklearn": "scikit-learn",
 }
 
+MUTEX_HANDLE = None
+
+
 def hide_path(path):
     try:
-        FILE_ATTRIBUTE_HIDDEN = 0x02
-        FILE_ATTRIBUTE_SYSTEM = 0x04
         ctypes.windll.kernel32.SetFileAttributesW(
-            str(path),
-            FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM,
+            str(path), 0x02 | 0x04
         )
     except Exception:
         pass
 
 
 def log(message):
-    # Diagnostics stay inside the hidden PyGit folder.
     try:
         os.makedirs(RUNTIME_DIR, exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -69,12 +66,30 @@ def log(message):
         pass
 
 
+def acquire_single_instance():
+    global MUTEX_HANDLE
+
+    # Prevent multiple PyGit supervisors from running at the same time.
+    MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(
+        None, False, "Global\\PyGit-Supervisor-v1"
+    )
+
+    if not MUTEX_HANDLE:
+        return True
+
+    ERROR_ALREADY_EXISTS = 183
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        return False
+
+    return True
+
+
 def get_remote(path):
     url = GITHUB_RAW + path.lstrip("/") + "?_=" + str(time.time_ns())
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "PyGit-Live/3.0",
+            "User-Agent": "PyGit-Live/3.1",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
         },
@@ -140,7 +155,7 @@ def bootstrap_private_python():
     try:
         request = urllib.request.Request(
             PYTHON_RUNTIME_URL,
-            headers={"User-Agent": "PyGit-Live/3.0"},
+            headers={"User-Agent": "PyGit-Live/3.1"},
         )
         with urllib.request.urlopen(request, timeout=90) as response:
             with open(archive_path, "wb") as out:
@@ -173,7 +188,7 @@ def bootstrap_private_python():
         get_pip_path = os.path.join(PYTHON_RUNTIME_DIR, "get-pip.py")
         request = urllib.request.Request(
             "https://bootstrap.pypa.io/get-pip.py",
-            headers={"User-Agent": "PyGit-Live/3.0"},
+            headers={"User-Agent": "PyGit-Live/3.1"},
         )
         with urllib.request.urlopen(request, timeout=90) as response:
             with open(get_pip_path, "wb") as out:
@@ -182,6 +197,8 @@ def bootstrap_private_python():
         result = subprocess.run(
             [PYTHON_EXE, get_pip_path, "--disable-pip-version-check"],
             cwd=APP_DIR,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
@@ -215,8 +232,6 @@ def extract_imports(code):
 
 
 def install_missing_dependencies(code):
-    # Python has no built-in "install this module when import fails" behavior.
-    # PyGit provides that behavior by inspecting imports before starting code.py.
     try:
         stdlib = sys.stdlib_module_names
     except AttributeError:
@@ -229,7 +244,6 @@ def install_missing_dependencies(code):
             continue
 
         try:
-            # Check the private runtime, not the PyInstaller build environment.
             probe = subprocess.run(
                 get_python_command()
                 + [
@@ -263,6 +277,8 @@ def install_missing_dependencies(code):
             *missing,
         ],
         cwd=APP_DIR,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
@@ -313,8 +329,7 @@ def ensure_runtime():
     return remote_control
 
 
-def start_code(control):
-    # pythonw.exe means no console window is created for the kiosk application.
+def start_code():
     return subprocess.Popen(
         get_pythonw_command() + [RUNTIME_CODE],
         cwd=APP_DIR,
@@ -344,12 +359,10 @@ def check_for_update(current_control):
 
     remote_code = get_remote(remote_control["code"])
     install_remote(remote_control, remote_code)
-
     return remote_control, True
 
 
 def install_startup():
-    # Start PyGit automatically when the kiosk user signs in.
     try:
         with winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
@@ -358,11 +371,7 @@ def install_startup():
             winreg.KEY_SET_VALUE,
         ) as key:
             winreg.SetValueEx(
-                key,
-                "PyGit",
-                0,
-                winreg.REG_SZ,
-                f'"{INSTALLED_EXE}"',
+                key, "PyGit", 0, winreg.REG_SZ, f'"{INSTALLED_EXE}"'
             )
     except Exception as e:
         log(f"Startup registration failed: {e}")
@@ -396,14 +405,17 @@ def self_install():
 
 
 def main():
-    self_install()
-    bootstrap_private_python()
-
-    process = None
-
     try:
+        if not acquire_single_instance():
+            return
+
+        self_install()
+        bootstrap_private_python()
+
+        process = None
         control = ensure_runtime()
-        process = start_code(control)
+        log(f"Starting application version {control.get('version', 'unknown')}")
+        process = start_code()
 
         while True:
             time.sleep(CHECK_INTERVAL)
@@ -414,19 +426,21 @@ def main():
                 if updated:
                     stop_code(process)
                     control = new_control
-                    process = start_code(control)
+                    log(
+                        f"Updated application to version "
+                        f"{control.get('version', 'unknown')}"
+                    )
+                    process = start_code()
 
                 elif process.poll() is not None:
-                    # Keep the supervisor alive silently.
-                    process = start_code(control)
+                    log("Application stopped; restarting local code.")
+                    process = start_code()
 
             except Exception as e:
-                # GitHub/network failures never stop the local kiosk application.
                 log(f"Update check failed: {e}")
 
     except Exception as e:
-        log(f"Startup failed: {e}")
-        stop_code(process)
+        log(f"Startup failed: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
