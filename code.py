@@ -5,7 +5,7 @@ import tkinter as tk
 # ============================================================
 # True  = normal/client-usable mode (TOP HALF only for testing)
 # False = kiosk mode (FULL SCREEN)
-USABLE = True
+USABLE = False
 
 
 def main():
