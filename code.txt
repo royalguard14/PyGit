@@ -1,2 +1,3 @@
 print("Hello from PyGit!")
-print("My name is Ghaizar.")
+print("THIS IS VERSION 1.1.0!")
+print("The code updated LIVE from GitHub!")
