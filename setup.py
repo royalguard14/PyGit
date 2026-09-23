@@ -13,7 +13,16 @@ CHECK_INTERVAL = 5
 
 
 def get_remote(path):
-    with urllib.request.urlopen(GITHUB_RAW + path, timeout=10) as response:
+    # Cache-buster prevents GitHub's raw CDN from serving an older copy.
+    separator = "&" if "?" in path else "?"
+    url = GITHUB_RAW + path + separator + "_=" + str(time.time_ns())
+
+    request = urllib.request.Request(
+        url,
+        headers={"Cache-Control": "no-cache", "Pragma": "no-cache"}
+    )
+
+    with urllib.request.urlopen(request, timeout=10) as response:
         return response.read().decode("utf-8")
 
 
@@ -110,7 +119,6 @@ def main():
         while True:
             time.sleep(CHECK_INTERVAL)
 
-            # Check whether the user wants to quit.
             if os.name == "nt":
                 import msvcrt
                 if msvcrt.kbhit():
@@ -120,7 +128,6 @@ def main():
                         stop_code(process)
                         break
 
-            # Check GitHub for a newer version.
             try:
                 remote_control = json.loads(get_remote("control.json"))
                 local_control = load_local_control() or {}
