@@ -1,5 +1,4 @@
 import json
-import msvcrt
 import os
 import shutil
 import subprocess
@@ -23,7 +22,8 @@ LOG_FILE = os.path.join(RUNTIME_DIR, "pygit.log")
 def log(message):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {message}"
-    print(line)
+    print(line, flush=True)
+
     try:
         os.makedirs(RUNTIME_DIR, exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -109,7 +109,9 @@ def fetch_remote_control():
     remote_control = json.loads(get_remote("control.json"))
 
     if "version" not in remote_control or "code" not in remote_control:
-        raise ValueError("Invalid control.json: version and code are required.")
+        raise ValueError(
+            "Invalid control.json: version and code are required."
+        )
 
     return remote_control
 
@@ -122,7 +124,8 @@ def ensure_runtime():
     if control and os.path.exists(RUNTIME_CODE):
         return control
 
-    log("[PYGIT] No local runtime found. Downloading current GitHub version...")
+    log("[PYGIT] No local runtime found.")
+    log("[PYGIT] Downloading current GitHub version...")
 
     remote_control = fetch_remote_control()
     remote_code = get_remote(remote_control["code"])
@@ -135,11 +138,14 @@ def ensure_runtime():
 
 def start_code(control):
     log(f"[PYGIT] Running version {control['version']}")
+    log("[PYGIT] Starting code.py...")
 
+    # Development/test mode:
+    # Keep the child attached to the current console so print()
+    # output from code.py is visible.
     return subprocess.Popen(
         [sys.executable, RUNTIME_CODE],
         cwd=BASE_DIR,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
 
 
@@ -149,7 +155,7 @@ def stop_code(process):
         process.terminate()
 
         try:
-            process.wait(timeout=3)
+            process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             log("[PYGIT] Application did not stop gracefully. Killing it...")
             process.kill()
@@ -171,16 +177,19 @@ def check_for_update(current_control):
     remote_code = get_remote(remote_control["code"])
     install_remote(remote_control, remote_code)
 
-    log("[UPDATE] Code compiled and installed.")
+    log("[UPDATE] New code validated and installed.")
     return remote_control, True
 
 
 def main():
-    print("================================")
-    print("          PyGit Live")
-    print("================================")
-    print(f"Checking GitHub every {CHECK_INTERVAL} seconds...")
-    print("")
+    print("================================", flush=True)
+    print("          PyGit Live", flush=True)
+    print("================================", flush=True)
+    print(
+        f"Checking GitHub every {CHECK_INTERVAL} seconds...",
+        flush=True,
+    )
+    print("", flush=True)
 
     process = None
 
@@ -189,14 +198,14 @@ def main():
         process = start_code(control)
 
         while True:
-            if os.name == "nt" and msvcrt.kbhit():
-                key = msvcrt.getwch()
-                if key.lower() == "q":
-                    log("[PYGIT] Q received. Shutting down...")
-                    stop_code(process)
-                    break
-
             time.sleep(CHECK_INTERVAL)
+
+            # Restart local application if it exits.
+            if process.poll() is not None:
+                log("[PYGIT] Application stopped.")
+                log("[PYGIT] Restarting local code...")
+                process = start_code(control)
+                continue
 
             try:
                 new_control, updated = check_for_update(control)
@@ -204,15 +213,13 @@ def main():
                 if updated:
                     log("[PYGIT] Restarting application...")
                     stop_code(process)
+
                     control = new_control
                     process = start_code(control)
 
-                elif process.poll() is not None:
-                    log("[PYGIT] Application stopped; restarting local code.")
-                    process = start_code(control)
-
             except (urllib.error.URLError, urllib.error.HTTPError) as e:
-                log(f"[PYGIT] GitHub check failed: {e}")
+                log(f"[PYGIT] GitHub unavailable: {e}")
+                log("[PYGIT] Continuing with local code.")
 
             except Exception as e:
                 log(f"[PYGIT] Update check failed: {e}")
