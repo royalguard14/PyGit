@@ -245,15 +245,39 @@ def ensure_runtime():
     try:
         remote_control = fetch_control()
 
-        if (
-            local_control
-            and os.path.exists(RUNTIME_CODE)
-            and not is_newer_version(
-                remote_control["version"],
-                local_control.get("version", "0.0.0"),
-            )
-        ):
-            return local_control
+        if local_control and os.path.exists(RUNTIME_CODE):
+            local_version = local_control.get("version", "0.0.0")
+            remote_version = remote_control["version"]
+
+            if not is_newer_version(remote_version, local_version):
+                # The control file can say the correct version while the
+                # actual code file is stale. Verify the code before trusting
+                # the local runtime.
+                remote_code = get_remote(remote_control["code"])
+
+                try:
+                    with open(RUNTIME_CODE, "r", encoding="utf-8") as f:
+                        local_code = f.read()
+                except OSError as e:
+                    raise RuntimeError(
+                        f"Unable to read local runtime code: {e}"
+                    ) from e
+
+                if local_code == remote_code:
+                    return local_control
+
+                log(
+                    f"[PYGIT] Runtime code mismatch for version "
+                    f"{remote_version}. Repairing local code..."
+                )
+                remote_requirements = get_remote_requirements()
+                install_remote(
+                    remote_control,
+                    remote_code,
+                    remote_requirements,
+                )
+                log(f"[PYGIT] Repaired version {remote_version}.")
+                return remote_control
 
         if local_control:
             log(
@@ -279,10 +303,11 @@ def ensure_runtime():
         log(f"[PYGIT] Installed version {remote_control['version']}.")
         return remote_control
 
-    except GitHubFetchError:
+    except GitHubFetchError as e:
         # If GitHub is unavailable, continue with an existing local runtime.
         if local_control and os.path.exists(RUNTIME_CODE):
-            raise
+            log(f"[PYGIT] Initial GitHub check failed; using local runtime: {e}")
+            return local_control
         raise
 
 
