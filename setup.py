@@ -29,7 +29,6 @@ class GitHubFetchError(Exception):
 def log(message):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {message}"
-    print(line)
     try:
         os.makedirs(RUNTIME_DIR, exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -323,12 +322,6 @@ def check_for_update(current_control):
 
 
 def main():
-    print("================================")
-    print("          PyGit Live")
-    print("================================")
-    print(f"Checking GitHub every {CHECK_INTERVAL} seconds...")
-    print("")
-
     process = None
 
     try:
