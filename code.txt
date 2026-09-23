@@ -1,5 +1,8 @@
-print("Hello from PyGit!")
-print("THIS IS VERSION 1.4.0!")
-print("🚀 SECOND LIVE UPDATE TEST PASSED!")
-print("Version 1.4.0 was downloaded automatically from GitHub!")
-print("No git pull was used!")
+class HelloWorld:
+    def run(self):
+        print("Hello World!")
+        print("🔥 PyGit VERSION 1.5.0")
+        print("CLASS EXECUTION SUCCESSFUL!")
+
+
+HelloWorld().run()
