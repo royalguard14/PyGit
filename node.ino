@@ -185,6 +185,241 @@ void handleEditor() {
   } else server.send(404, "text/plain", "editor.html not found");
 }
 
+
+const char* FIRMWARE_HASH_URL =
+  "https://raw.githubusercontent.com/royalguard14/PyGit/refs/heads/main/nodemcu/firmware.sha256";
+const char* FIRMWARE_BIN_URL =
+  "https://raw.githubusercontent.com/royalguard14/PyGit/refs/heads/main/nodemcu/firmware.bin";
+const char* LOCAL_FIRMWARE_HASH = "/firmware.sha256";
+
+String normalizeHash(String value) {
+  value.trim();
+  value.toLowerCase();
+  return value;
+}
+
+String hashToHex(BearSSL::HashSHA256 &hash) {
+  const uint8_t* digest = (const uint8_t*)hash.hash();
+  const char hex[] = "0123456789abcdef";
+  String result;
+  result.reserve(64);
+  for (int i = 0; i < 32; i++) {
+    result += hex[(digest[i] >> 4) & 0x0F];
+    result += hex[digest[i] & 0x0F];
+  }
+  return result;
+}
+
+String loadLocalFirmwareHash() {
+  if (!LittleFS.exists(LOCAL_FIRMWARE_HASH)) return "";
+  File f = LittleFS.open(LOCAL_FIRMWARE_HASH, "r");
+  if (!f) return "";
+  String hash = f.readString();
+  f.close();
+  return normalizeHash(hash);
+}
+
+bool saveLocalFirmwareHash(const String &hash) {
+  File f = LittleFS.open(LOCAL_FIRMWARE_HASH, "w");
+  if (!f) return false;
+  f.println(hash);
+  f.close();
+  return true;
+}
+
+String getRemoteFirmwareHash() {
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  String url = String(FIRMWARE_HASH_URL) + "?pygit=" + String(millis());
+
+  if (!http.begin(client, url)) return "";
+
+  http.setTimeout(15000);
+  int httpCode = http.GET();
+
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.print("OTA: hash HTTP code: ");
+    Serial.println(httpCode);
+    http.end();
+    return "";
+  }
+
+  String hash = http.getString();
+  http.end();
+  hash = normalizeHash(hash);
+
+  if (hash.length() != 64) return "";
+  return hash;
+}
+
+bool downloadAndInstallFirmware(const String &remoteHash) {
+  Serial.println("OTA: NEW FIRMWARE DETECTED.");
+  Serial.println("OTA: downloading firmware...");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  String url = String(FIRMWARE_BIN_URL) + "?pygit=" + String(millis());
+
+  if (!http.begin(client, url)) {
+    Serial.println("OTA: firmware connection setup FAILED.");
+    return false;
+  }
+
+  http.setTimeout(30000);
+  int httpCode = http.GET();
+
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.print("OTA: firmware HTTP code: ");
+    Serial.println(httpCode);
+    http.end();
+    return false;
+  }
+
+  int contentLength = http.getSize();
+
+  if (contentLength <= 0) {
+    Serial.println("OTA: invalid firmware size.");
+    http.end();
+    return false;
+  }
+
+  Serial.print("OTA: firmware size = ");
+  Serial.print(contentLength);
+  Serial.println(" bytes");
+
+  if (!Update.begin((size_t)contentLength, U_FLASH)) {
+    Serial.print("OTA: Update.begin FAILED: ");
+    Serial.println(Update.errorString());
+    http.end();
+    return false;
+  }
+
+  BearSSL::HashSHA256 hash;
+  hash.begin();
+
+  Stream* stream = http.getStreamPtr();
+  uint8_t buffer[1024];
+  size_t totalWritten = 0;
+  unsigned long lastDataAt = millis();
+
+  while (totalWritten < (size_t)contentLength &&
+         millis() - lastDataAt < 30000) {
+
+    size_t availableBytes = stream->available();
+
+    if (availableBytes == 0) {
+      delay(1);
+      continue;
+    }
+
+    size_t toRead = min(availableBytes, sizeof(buffer));
+    size_t remaining = (size_t)contentLength - totalWritten;
+    if (toRead > remaining) toRead = remaining;
+
+    size_t readBytes = stream->readBytes(buffer, toRead);
+
+    if (readBytes == 0) continue;
+
+    lastDataAt = millis();
+    hash.add(buffer, readBytes);
+
+    size_t written = Update.write(buffer, readBytes);
+
+    if (written != readBytes) {
+      Serial.println("OTA: firmware write FAILED.");
+      Update.abort();
+      http.end();
+      return false;
+    }
+
+    totalWritten += written;
+    Serial.print("OTA: ");
+    Serial.print((totalWritten * 100UL) / contentLength);
+    Serial.println("%");
+  }
+
+  http.end();
+
+  if (totalWritten != (size_t)contentLength) {
+    Serial.println("OTA: incomplete firmware download.");
+    Update.abort();
+    return false;
+  }
+
+  hash.end();
+  String downloadedHash = hashToHex(hash);
+
+  Serial.print("OTA: downloaded SHA-256 = ");
+  Serial.println(downloadedHash);
+  Serial.print("OTA: expected SHA-256   = ");
+  Serial.println(remoteHash);
+
+  if (downloadedHash != remoteHash) {
+    Serial.println("OTA: SHA-256 MISMATCH. Update rejected.");
+    Update.abort();
+    return false;
+  }
+
+  if (!Update.end(true)) {
+    Serial.print("OTA: Update.end FAILED: ");
+    Serial.println(Update.errorString());
+    Update.abort();
+    return false;
+  }
+
+  Serial.println("OTA: firmware written successfully.");
+
+  if (!saveLocalFirmwareHash(remoteHash)) {
+    Serial.println("OTA: hash save FAILED.");
+    Serial.println("OTA: current firmware will remain active; update will retry.");
+    return false;
+  }
+
+  Serial.println("OTA: new hash saved.");
+  Serial.println("OTA: restarting...");
+  delay(1000);
+  ESP.restart();
+
+  return true;
+}
+
+void checkForFirmwareUpdate() {
+  if (!wifiConnected) {
+    Serial.println("OTA: WiFi unavailable. Skipping update check.");
+    return;
+  }
+
+  Serial.println();
+  Serial.println("Checking GitHub firmware...");
+
+  String remoteHash = getRemoteFirmwareHash();
+
+  if (remoteHash.length() != 64) {
+    Serial.println("OTA: firmware hash unavailable. Running current firmware.");
+    return;
+  }
+
+  String localHash = loadLocalFirmwareHash();
+
+  Serial.print("OTA: local hash  = ");
+  if (localHash.length()) Serial.println(localHash);
+  else Serial.println("(none)");
+
+  Serial.print("OTA: remote hash = ");
+  Serial.println(remoteHash);
+
+  if (localHash == remoteHash) {
+    Serial.println("OTA: firmware is already up to date.");
+    return;
+  }
+
+  downloadAndInstallFirmware(remoteHash);
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -227,6 +462,8 @@ void setup() {
       Serial.println("WiFi failed");
     }
   }
+
+  checkForFirmwareUpdate();
 
   server.on("/select", HTTP_GET, handleSelect);
   server.on("/cancel", HTTP_GET, handleCancel);
