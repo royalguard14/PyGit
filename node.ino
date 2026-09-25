@@ -5,10 +5,10 @@
 #include <LiquidCrystal_I2C.h>
 #include <vector>
 
-// ===== CONFIG =====
-#define COIN_PIN D5
-#define BTN_UP   D3
-#define BTN_DOWN D4
+#define COIN_PIN    D6       // GPIO12 - coin pulse
+#define TRIGGER_PIN D5       // GPIO14 - client trigger
+
+const char* WIFI_CONFIG = "/wifi_config.json";
 
 struct PCInfo { String name; String ip; };
 std::vector<PCInfo> pcs;
@@ -16,28 +16,66 @@ std::vector<PCInfo> pcs;
 ESP8266WebServer server(80);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// ===== STATE =====
 bool wifiConnected = false;
-String storedPassword = "password";
 String selectedPC = "";
+String wifiSSID = "";
+String wifiPassword = "";
 
 int minutesPerPulse = 8;
 int pulseCount = 0;
-int lastCoin = HIGH;
-
 unsigned long pulse_gap_ms = 300;
 unsigned int debounce_us = 500;
+unsigned long selectionTimeoutMs = 30000;
+unsigned long selectionStartedAt = 0;
 
-// WiFi
-const char* ssid = "Bautista";
-const char* pass = "@Sufyanbautista30";
-
-// ===== UTILITIES =====
-void showSelectedPC() {
+void showStatus() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("selectedPC : ");
-  lcd.print(selectedPC.substring(0, 3)); // fits LCD
+  lcd.print("Target:");
+  if (selectedPC.length() > 0) lcd.print(selectedPC.substring(0, 9));
+  else lcd.print("NONE");
+  lcd.setCursor(0, 1);
+  lcd.print(digitalRead(TRIGGER_PIN) == LOW ? "TRIGGER READY" : "Waiting...");
+}
+
+void clearSelection(const String &reason) {
+  if (selectedPC.length() > 0)
+    Serial.println("Target cleared: " + selectedPC + " (" + reason + ")");
+  selectedPC = "";
+  selectionStartedAt = 0;
+  showStatus();
+}
+
+bool loadWiFiConfig() {
+  if (!LittleFS.exists(WIFI_CONFIG)) {
+    Serial.println("ERROR: /wifi_config.json not found.");
+    return false;
+  }
+
+  File f = LittleFS.open(WIFI_CONFIG, "r");
+  if (!f) return false;
+
+  DynamicJsonDocument doc(1024);
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (err) {
+    Serial.println("ERROR: Invalid wifi_config.json");
+    return false;
+  }
+
+  wifiSSID = doc["ssid"] | "";
+  wifiPassword = doc["password"] | "";
+
+  wifiSSID.trim();
+
+  if (wifiSSID.length() == 0) {
+    Serial.println("ERROR: WiFi SSID is empty.");
+    return false;
+  }
+
+  Serial.println("WiFi credentials loaded from LittleFS.");
+  return true;
 }
 
 void loadConfig() {
@@ -45,6 +83,7 @@ void loadConfig() {
 
   File f = LittleFS.open("/config.json", "r");
   DynamicJsonDocument doc(4096);
+
   if (deserializeJson(doc, f)) {
     f.close();
     return;
@@ -54,17 +93,17 @@ void loadConfig() {
   minutesPerPulse = doc["minutes_per_pulse"] | minutesPerPulse;
   pulse_gap_ms = doc["pulse_gap_ms"] | pulse_gap_ms;
   debounce_us = doc["debounce_us"] | debounce_us;
+  selectionTimeoutMs = doc["selection_timeout_ms"] | selectionTimeoutMs;
 
   pcs.clear();
-  for (JsonVariant v : doc["pcs"].as<JsonArray>()) {
+  JsonArray arr = doc["pcs"].as<JsonArray>();
+
+  for (JsonVariant v : arr) {
     PCInfo p;
     p.name = v["name"].as<String>();
-    p.ip   = v["ip"].as<String>();
-    pcs.push_back(p);
+    p.ip = v["ip"].as<String>();
+    if (p.name.length() > 0 && p.ip.length() > 0) pcs.push_back(p);
   }
-
-  if (!pcs.empty()) selectedPC = pcs[0].name;
-  if (selectedPC == "") selectedPC = "PC1";
 }
 
 PCInfo* findPC(const String &name) {
@@ -80,7 +119,48 @@ void logCoin(const String &pcName, int minutes) {
   f.close();
 }
 
-// ===== WEB HANDLERS =====
+// Client presses ADD and selects a target:
+// GET /select?pc=PC1
+void handleSelect() {
+  if (!server.hasArg("pc")) {
+    server.send(400, "text/plain", "Missing pc");
+    return;
+  }
+
+  String pcName = server.arg("pc");
+  pcName.trim();
+
+  PCInfo* pc = findPC(pcName);
+  if (!pc) {
+    server.send(404, "text/plain", "Unknown PC: " + pcName);
+    return;
+  }
+
+  selectedPC = pcName;
+  selectionStartedAt = millis();
+
+  Serial.println();
+  Serial.println("CLIENT TARGET SELECTED: " + selectedPC);
+  Serial.println("Waiting for GPIO14 trigger...");
+
+  showStatus();
+  server.send(200, "text/plain", "OK:" + selectedPC);
+}
+
+void handleCancel() {
+  clearSelection("client cancelled");
+  server.send(200, "text/plain", "CANCELLED");
+}
+
+void handleStatus() {
+  String json = "{";
+  json += "\"target\":\"" + selectedPC + "\",";
+  json += "\"trigger\":" + String(digitalRead(TRIGGER_PIN) == LOW ? "true" : "false") + ",";
+  json += "\"wifi\":" + String(wifiConnected ? "true" : "false");
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
 void handleDashboard() {
   if (LittleFS.exists("/dashboard.html")) {
     File f = LittleFS.open("/dashboard.html", "r");
@@ -105,7 +185,6 @@ void handleEditor() {
   } else server.send(404, "text/plain", "editor.html not found");
 }
 
-// ===== SETUP =====
 void setup() {
   Serial.begin(115200);
 
@@ -113,113 +192,132 @@ void setup() {
   lcd.backlight();
 
   pinMode(COIN_PIN, INPUT_PULLUP);
-  pinMode(BTN_UP, INPUT_PULLUP);
-  pinMode(BTN_DOWN, INPUT_PULLUP);
-  lastCoin = digitalRead(COIN_PIN);
+  pinMode(TRIGGER_PIN, INPUT_PULLUP);
 
-  LittleFS.begin();
+  if (!LittleFS.begin()) {
+    Serial.println("LittleFS mount FAILED.");
+  }
+
   loadConfig();
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, pass);
-
-  lcd.clear();
-  lcd.print("Connecting...");
-
-  int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 30) {
-    delay(500);
-    retry++;
-  }
-
-  wifiConnected = (WiFi.status() == WL_CONNECTED);
-
-  if (wifiConnected) {
-    Serial.println("WiFi connected: " + WiFi.localIP().toString());
-    Serial.println("MAC: " + WiFi.macAddress());
+  if (!loadWiFiConfig()) {
+    lcd.clear();
+    lcd.print("WiFi config");
+    lcd.setCursor(0, 1);
+    lcd.print("missing!");
   } else {
-    Serial.println("WiFi failed");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+
+    lcd.clear();
+    lcd.print("Connecting...");
+
+    int retry = 0;
+    while (WiFi.status() != WL_CONNECTED && retry < 30) {
+      delay(500);
+      retry++;
+    }
+
+    wifiConnected = (WiFi.status() == WL_CONNECTED);
+
+    if (wifiConnected) {
+      Serial.println("WiFi connected: " + WiFi.localIP().toString());
+      Serial.println("MAC: " + WiFi.macAddress());
+    } else {
+      Serial.println("WiFi failed");
+    }
   }
 
+  server.on("/select", HTTP_GET, handleSelect);
+  server.on("/cancel", HTTP_GET, handleCancel);
+  server.on("/status", HTTP_GET, handleStatus);
   server.on("/", handleDashboard);
   server.on("/dashboard", handleDashboard);
   server.on("/setting", handleSettings);
   server.on("/editor", handleEditor);
   server.begin();
 
-  showSelectedPC();
+  showStatus();
 }
 
-// ===== LOOP =====
 void loop() {
   server.handleClient();
-
-  // update WiFi status (DO NOT RETURN)
   wifiConnected = (WiFi.status() == WL_CONNECTED);
 
-  // ===== BUTTON SELECT =====
-  if (digitalRead(BTN_UP) == LOW && pcs.size() > 0) {
-    delay(200);
-    int idx = 0;
-    for (int i = 0; i < pcs.size(); i++)
-      if (pcs[i].name == selectedPC) idx = i;
-    idx = (idx + 1) % pcs.size();
-    selectedPC = pcs[idx].name;
-    Serial.println("Selected PC: " + selectedPC);
-    showSelectedPC();
+  if (selectedPC.length() > 0 &&
+      selectionStartedAt > 0 &&
+      millis() - selectionStartedAt > selectionTimeoutMs) {
+    clearSelection("selection timeout");
   }
 
-  if (digitalRead(BTN_DOWN) == LOW && pcs.size() > 0) {
-    delay(200);
-    int idx = 0;
-    for (int i = 0; i < pcs.size(); i++)
-      if (pcs[i].name == selectedPC) idx = i;
-    idx = (idx - 1 + pcs.size()) % pcs.size();
-    selectedPC = pcs[idx].name;
-    Serial.println("Selected PC: " + selectedPC);
-    showSelectedPC();
-  }
-
-  // ===== COIN LOGIC (ORIGINAL – WORKING) =====
+  // Coinslot pulse is approximately 50 ms.
+  // Detect the HIGH -> LOW edge on D6/GPIO12.
   int coinState = digitalRead(COIN_PIN);
+  static int lastCoin = HIGH;
   static unsigned long lastPulseTime = 0;
   static unsigned long lastCoinTime = 0;
 
-  if (coinState == LOW && lastCoin == HIGH &&
-      (micros() - lastCoinTime) > debounce_us) {
+  if (coinState == LOW &&
+      lastCoin == HIGH &&
+      micros() - lastCoinTime > debounce_us) {
     pulseCount++;
     lastPulseTime = millis();
     lastCoinTime = micros();
     Serial.println("COIN PULSE");
   }
+
   lastCoin = coinState;
 
-  if (pulseCount > 0 && (millis() - lastPulseTime) > pulse_gap_ms) {
-    int minutes = pulseCount * minutesPerPulse;
+  if (pulseCount > 0 && millis() - lastPulseTime > pulse_gap_ms) {
+    bool triggerActive = digitalRead(TRIGGER_PIN) == LOW;
 
-    PCInfo* pc = findPC(selectedPC);
-    if (pc && wifiConnected) {
-      WiFiClient client;
-      client.setTimeout(1000);
-      Serial.println("Trying TCP to " + pc->ip);
-      if (client.connect(pc->ip.c_str(), 5000)) {
-        String msg = pc->name + ":+" + String(minutes) + "\n";
-        client.print(msg);
-        client.stop();
-        Serial.println("TCP SENT: " + msg);
+    if (selectedPC.length() == 0) {
+      Serial.println("COIN IGNORED: no client selected.");
+    } else if (!triggerActive) {
+      Serial.println("COIN IGNORED: GPIO14 trigger is not active.");
+    } else {
+      int minutes = pulseCount * minutesPerPulse;
+      PCInfo* pc = findPC(selectedPC);
+
+      if (pc && wifiConnected) {
+        WiFiClient client;
+        client.setTimeout(1000);
+
+        if (client.connect(pc->ip.c_str(), 5000)) {
+          String msg = pc->name + ":+" + String(minutes) + "\n";
+          client.print(msg);
+          client.stop();
+
+          Serial.println("TCP SENT: " + msg);
+          logCoin(selectedPC, minutes);
+
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print(selectedPC.substring(0, 8));
+          lcd.setCursor(0, 1);
+          lcd.print("+");
+          lcd.print(minutes);
+          lcd.print(" minutes");
+        } else {
+          Serial.println("TCP FAILED");
+        }
       } else {
-        Serial.println("TCP FAILED");
+        Serial.println("TARGET PC NOT AVAILABLE");
       }
     }
 
-    logCoin(selectedPC, minutes);
-
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(selectedPC.substring(0, 8));
-    lcd.print(" = ");
-    lcd.print(minutes);
-
     pulseCount = 0;
   }
+
+  static int lastTriggerState = HIGH;
+  int triggerState = digitalRead(TRIGGER_PIN);
+
+  if (lastTriggerState == LOW &&
+      triggerState == HIGH &&
+      selectedPC.length() > 0) {
+    Serial.println("GPIO14 RELEASED.");
+    clearSelection("trigger released");
+  }
+
+  lastTriggerState = triggerState;
 }
