@@ -1,16 +1,21 @@
-name: Build PyGit Setup EXE
+name: Build PyGit and NodeMCU
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "nodemcu/firmware.bin"
+      - "nodemcu/firmware.sha256"
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  build:
+
+  build-pygit:
+    name: Build PyGit Setup EXE
     runs-on: windows-latest
+
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -40,3 +45,70 @@ jobs:
           name: PyGit-Setup
           path: dist/PyGit.exe
           if-no-files-found: error
+
+
+  build-nodemcu:
+    name: Build NodeMCU Firmware
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP8266 platform
+        run: |
+          arduino-cli core update-index --additional-urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core install esp8266:esp8266@3.1.2
+
+      - name: Install Arduino libraries
+        run: |
+          arduino-cli lib update-index
+          arduino-cli lib install "ArduinoJson"
+          arduino-cli lib install "LiquidCrystal I2C"
+
+      - name: Prepare NodeMCU sketch
+        run: |
+          mkdir -p build/node_sketch
+          cp node.ino build/node_sketch/node_sketch.ino
+
+      - name: Compile NodeMCU firmware
+        run: |
+          arduino-cli compile             --fqbn esp8266:esp8266:nodemcuv2             --output-dir build/node_firmware             build/node_sketch
+
+      - name: Publish firmware and SHA-256
+        run: |
+          BIN=$(find build/node_firmware -maxdepth 1 -type f -name "*.bin" | head -n 1)
+
+          if [ -z "$BIN" ]; then
+            echo "ERROR: NodeMCU firmware .bin was not produced."
+            exit 1
+          fi
+
+          cp "$BIN" nodemcu/firmware.bin
+          sha256sum nodemcu/firmware.bin | awk '{print $1}' > nodemcu/firmware.sha256
+
+          echo "Firmware:"
+          ls -lh nodemcu/firmware.bin
+          echo "SHA-256:"
+          cat nodemcu/firmware.sha256
+
+      - name: Commit generated firmware
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add nodemcu/firmware.bin nodemcu/firmware.sha256
+
+          if git diff --cached --quiet; then
+            echo "No firmware changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Build NodeMCU firmware [skip ci]"
+          git push
