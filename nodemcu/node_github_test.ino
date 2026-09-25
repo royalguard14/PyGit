@@ -2,8 +2,8 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-const char* ssid = "YOUR_WIFI";
-const char* password = "YOUR_PASSWORD";
+const char* ssid = "Bautista";
+const char* password = "@Sufyanbautista30";
 
 const char* githubURL =
   "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/node_test.txt";
