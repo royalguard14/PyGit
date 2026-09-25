@@ -1,5 +1,8 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <Update.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <LiquidCrystal_I2C.h>
@@ -191,6 +194,7 @@ const char* FIRMWARE_HASH_URL =
 const char* FIRMWARE_BIN_URL =
   "https://raw.githubusercontent.com/royalguard14/PyGit/refs/heads/main/nodemcu/firmware.bin";
 const char* LOCAL_FIRMWARE_HASH = "/firmware.sha256";
+const char* TEMP_FIRMWARE_FILE = "/firmware.tmp";
 
 String normalizeHash(String value) {
   value.trim();
@@ -203,25 +207,31 @@ String hashToHex(BearSSL::HashSHA256 &hash) {
   const char hex[] = "0123456789abcdef";
   String result;
   result.reserve(64);
+
   for (int i = 0; i < 32; i++) {
     result += hex[(digest[i] >> 4) & 0x0F];
     result += hex[digest[i] & 0x0F];
   }
+
   return result;
 }
 
 String loadLocalFirmwareHash() {
   if (!LittleFS.exists(LOCAL_FIRMWARE_HASH)) return "";
+
   File f = LittleFS.open(LOCAL_FIRMWARE_HASH, "r");
   if (!f) return "";
+
   String hash = f.readString();
   f.close();
+
   return normalizeHash(hash);
 }
 
 bool saveLocalFirmwareHash(const String &hash) {
   File f = LittleFS.open(LOCAL_FIRMWARE_HASH, "w");
   if (!f) return false;
+
   f.println(hash);
   f.close();
   return true;
@@ -234,9 +244,13 @@ String getRemoteFirmwareHash() {
   HTTPClient http;
   String url = String(FIRMWARE_HASH_URL) + "?pygit=" + String(millis());
 
-  if (!http.begin(client, url)) return "";
+  if (!http.begin(client, url)) {
+    Serial.println("OTA: hash connection setup FAILED.");
+    return "";
+  }
 
   http.setTimeout(15000);
+
   int httpCode = http.GET();
 
   if (httpCode != HTTP_CODE_OK) {
@@ -248,15 +262,24 @@ String getRemoteFirmwareHash() {
 
   String hash = http.getString();
   http.end();
+
   hash = normalizeHash(hash);
 
-  if (hash.length() != 64) return "";
+  if (hash.length() != 64) {
+    Serial.println("OTA: invalid firmware SHA-256.");
+    return "";
+  }
+
   return hash;
 }
 
 bool downloadAndInstallFirmware(const String &remoteHash) {
   Serial.println("OTA: NEW FIRMWARE DETECTED.");
-  Serial.println("OTA: downloading firmware...");
+  Serial.println("OTA: downloading firmware to LittleFS...");
+
+  if (LittleFS.exists(TEMP_FIRMWARE_FILE)) {
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
+  }
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -270,6 +293,7 @@ bool downloadAndInstallFirmware(const String &remoteHash) {
   }
 
   http.setTimeout(30000);
+
   int httpCode = http.GET();
 
   if (httpCode != HTTP_CODE_OK) {
@@ -287,13 +311,10 @@ bool downloadAndInstallFirmware(const String &remoteHash) {
     return false;
   }
 
-  Serial.print("OTA: firmware size = ");
-  Serial.print(contentLength);
-  Serial.println(" bytes");
+  File tempFile = LittleFS.open(TEMP_FIRMWARE_FILE, "w");
 
-  if (!Update.begin((size_t)contentLength, U_FLASH)) {
-    Serial.print("OTA: Update.begin FAILED: ");
-    Serial.println(Update.errorString());
+  if (!tempFile) {
+    Serial.println("OTA: cannot create temporary firmware file.");
     http.end();
     return false;
   }
@@ -303,10 +324,10 @@ bool downloadAndInstallFirmware(const String &remoteHash) {
 
   Stream* stream = http.getStreamPtr();
   uint8_t buffer[1024];
-  size_t totalWritten = 0;
+  size_t totalDownloaded = 0;
   unsigned long lastDataAt = millis();
 
-  while (totalWritten < (size_t)contentLength &&
+  while (totalDownloaded < (size_t)contentLength &&
          millis() - lastDataAt < 30000) {
 
     size_t availableBytes = stream->available();
@@ -316,8 +337,10 @@ bool downloadAndInstallFirmware(const String &remoteHash) {
       continue;
     }
 
-    size_t toRead = min(availableBytes, sizeof(buffer));
-    size_t remaining = (size_t)contentLength - totalWritten;
+    size_t toRead = availableBytes;
+    if (toRead > sizeof(buffer)) toRead = sizeof(buffer);
+
+    size_t remaining = (size_t)contentLength - totalDownloaded;
     if (toRead > remaining) toRead = remaining;
 
     size_t readBytes = stream->readBytes(buffer, toRead);
@@ -325,59 +348,97 @@ bool downloadAndInstallFirmware(const String &remoteHash) {
     if (readBytes == 0) continue;
 
     lastDataAt = millis();
+
     hash.add(buffer, readBytes);
 
-    size_t written = Update.write(buffer, readBytes);
-
-    if (written != readBytes) {
-      Serial.println("OTA: firmware write FAILED.");
-      Update.abort();
+    if (tempFile.write(buffer, readBytes) != readBytes) {
+      Serial.println("OTA: temporary firmware write FAILED.");
+      tempFile.close();
       http.end();
+      LittleFS.remove(TEMP_FIRMWARE_FILE);
       return false;
     }
 
-    totalWritten += written;
-    Serial.print("OTA: ");
-    Serial.print((totalWritten * 100UL) / contentLength);
+    totalDownloaded += readBytes;
+
+    Serial.print("OTA: download ");
+    Serial.print((totalDownloaded * 100UL) / contentLength);
     Serial.println("%");
   }
 
+  tempFile.close();
   http.end();
 
-  if (totalWritten != (size_t)contentLength) {
+  if (totalDownloaded != (size_t)contentLength) {
     Serial.println("OTA: incomplete firmware download.");
-    Update.abort();
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
     return false;
   }
 
   hash.end();
+
   String downloadedHash = hashToHex(hash);
 
   Serial.print("OTA: downloaded SHA-256 = ");
   Serial.println(downloadedHash);
+
   Serial.print("OTA: expected SHA-256   = ");
   Serial.println(remoteHash);
 
   if (downloadedHash != remoteHash) {
     Serial.println("OTA: SHA-256 MISMATCH. Update rejected.");
-    Update.abort();
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
     return false;
   }
 
-  if (!Update.end(true)) {
+  File firmwareFile = LittleFS.open(TEMP_FIRMWARE_FILE, "r");
+
+  if (!firmwareFile) {
+    Serial.println("OTA: cannot reopen firmware file.");
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
+    return false;
+  }
+
+  size_t firmwareSize = firmwareFile.size();
+
+  if (!Update.begin(firmwareSize, U_FLASH)) {
+    Serial.print("OTA: Update.begin FAILED: ");
+    Serial.println(Update.getErrorString());
+    firmwareFile.close();
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
+    return false;
+  }
+
+  Serial.println("OTA: flashing firmware...");
+
+  size_t written = Update.writeStream(firmwareFile);
+  firmwareFile.close();
+
+  if (written != firmwareSize) {
+    Serial.println("OTA: firmware flash incomplete.");
+    Update.end(false);
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
+    return false;
+  }
+
+  if (!Update.end()) {
     Serial.print("OTA: Update.end FAILED: ");
-    Serial.println(Update.errorString());
-    Update.abort();
+    Serial.println(Update.getErrorString());
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
     return false;
   }
 
-  Serial.println("OTA: firmware written successfully.");
+  Serial.println("OTA: firmware update completed successfully.");
 
+  // Save the new hash only after the OTA write has succeeded.
   if (!saveLocalFirmwareHash(remoteHash)) {
-    Serial.println("OTA: hash save FAILED.");
-    Serial.println("OTA: current firmware will remain active; update will retry.");
+    Serial.println("OTA: WARNING - could not save new hash.");
+    Serial.println("OTA: update will be retried on next startup.");
+    LittleFS.remove(TEMP_FIRMWARE_FILE);
     return false;
   }
+
+  LittleFS.remove(TEMP_FIRMWARE_FILE);
 
   Serial.println("OTA: new hash saved.");
   Serial.println("OTA: restarting...");
