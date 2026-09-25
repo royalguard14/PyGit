@@ -6,7 +6,7 @@ const char* ssid = "Bautista";
 const char* password = "@Sufyanbautista30";
 
 const char* githubURL =
-  "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/node_test.txt";
+  "https://raw.githubusercontent.com/royalguard14/PyGit/refs/heads/main/nodemcu/node_test.txt";
 
 void setup() {
   Serial.begin(115200);
@@ -40,19 +40,27 @@ void setup() {
 
   HTTPClient http;
 
-  if (!http.begin(client, githubURL)) {
+  // Cache-busting helps make sure the NodeMCU requests the current file.
+  String url = String(githubURL) + "?pygit=" + String(millis());
+
+  Serial.print("URL: ");
+  Serial.println(url);
+
+  if (!http.begin(client, url)) {
     Serial.println("HTTP connection setup FAILED.");
     return;
   }
+
+  http.setTimeout(15000);
 
   int httpCode = http.GET();
 
   Serial.print("HTTP Code: ");
   Serial.println(httpCode);
 
-  if (httpCode == HTTP_CODE_OK) {
-    String payload = http.getString();
+  String payload = http.getString();
 
+  if (httpCode == HTTP_CODE_OK) {
     Serial.println();
     Serial.println("===== GITHUB CONTENT =====");
     Serial.println(payload);
@@ -61,7 +69,11 @@ void setup() {
 
     Serial.println("TEST SUCCESSFUL!");
   } else {
+    Serial.println();
     Serial.println("GitHub download FAILED.");
+    Serial.println("===== SERVER RESPONSE =====");
+    Serial.println(payload);
+    Serial.println("==========================");
   }
 
   http.end();
