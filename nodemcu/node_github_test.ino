@@ -2,7 +2,6 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
-#include <ArduinoJson.h>
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 
@@ -12,6 +11,37 @@ const char* githubURL =
 String wifiSSID = "";
 String wifiPassword = "";
 
+// Simple JSON value reader.
+// This avoids requiring the ArduinoJson library.
+String readJsonValue(const String& json, const String& key) {
+  String searchKey = "\"" + key + "\"";
+  int keyPos = json.indexOf(searchKey);
+
+  if (keyPos < 0) {
+    return "";
+  }
+
+  int colonPos = json.indexOf(':', keyPos + searchKey.length());
+
+  if (colonPos < 0) {
+    return "";
+  }
+
+  int quoteStart = json.indexOf('"', colonPos + 1);
+
+  if (quoteStart < 0) {
+    return "";
+  }
+
+  int quoteEnd = json.indexOf('"', quoteStart + 1);
+
+  if (quoteEnd < 0) {
+    return "";
+  }
+
+  return json.substring(quoteStart + 1, quoteEnd);
+}
+
 bool loadWiFiConfig() {
   if (!LittleFS.exists(WIFI_CONFIG)) {
     Serial.println("ERROR: /wifi_config.json not found.");
@@ -19,23 +49,17 @@ bool loadWiFiConfig() {
   }
 
   File f = LittleFS.open(WIFI_CONFIG, "r");
+
   if (!f) {
     Serial.println("ERROR: Cannot open /wifi_config.json.");
     return false;
   }
 
-  DynamicJsonDocument doc(1024);
-  DeserializationError err = deserializeJson(doc, f);
+  String json = f.readString();
   f.close();
 
-  if (err) {
-    Serial.print("ERROR: Invalid wifi_config.json: ");
-    Serial.println(err.c_str());
-    return false;
-  }
-
-  wifiSSID = doc["ssid"] | "";
-  wifiPassword = doc["password"] | "";
+  wifiSSID = readJsonValue(json, "ssid");
+  wifiPassword = readJsonValue(json, "password");
 
   if (wifiSSID.length() == 0 || wifiPassword.length() == 0) {
     Serial.println("ERROR: ssid/password missing in wifi_config.json.");
@@ -54,7 +78,7 @@ void setup() {
   Serial.println("NodeMCU GitHub Test");
   Serial.println("==============================");
 
-  // Load Wi-Fi credentials from LittleFS.
+  // Mount LittleFS.
   if (!LittleFS.begin()) {
     Serial.println("ERROR: LittleFS mount FAILED.");
     return;
@@ -62,6 +86,7 @@ void setup() {
 
   Serial.println("LittleFS mounted.");
 
+  // Load Wi-Fi credentials from LittleFS.
   if (!loadWiFiConfig()) {
     Serial.println("Wi-Fi configuration FAILED.");
     return;
@@ -92,7 +117,7 @@ void setup() {
 
   HTTPClient http;
 
-  // Cache-busting helps make sure the NodeMCU requests the current file.
+  // Cache-busting helps request the current GitHub file.
   String url = String(githubURL) + "?pygit=" + String(millis());
 
   Serial.print("URL: ");
