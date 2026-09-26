@@ -3,15 +3,21 @@
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266httpUpdate.h>
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 
-// Built-in FLASH button on most NodeMCU ESP8266 boards.
-const int SETUP_BUTTON_PIN = 0; // GPIO0 / D3
-
-// After normal boot, give the user a short window to press FLASH
-// and enter Wi-Fi setup mode without interfering with the bootloader.
+const int SETUP_BUTTON_PIN = 0;
 const unsigned long SETUP_WINDOW = 5000;
+const unsigned long UPDATE_CHECK_INTERVAL = 60000;
+unsigned long lastUpdateCheck = 0;
+
+// This is the version of the firmware produced from this source.
+// Every remotely deployed firmware change must bump this value.
+const char* LOCAL_FIRMWARE_VERSION = "1.0.2";
+
+const char* FIRMWARE_URL =
+  "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.bin";
 
 const char* configURL =
   "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
@@ -21,8 +27,6 @@ String wifiPassword = "";
 
 ESP8266WebServer server(80);
 
-// Simple JSON value reader.
-// This avoids requiring the ArduinoJson library.
 String readJsonValue(const String& json, const String& key) {
   String searchKey = "\"" + key + "\"";
   int keyPos = json.indexOf(searchKey);
@@ -232,7 +236,6 @@ bool connectToWiFi() {
   return true;
 }
 
-// Finds the version belonging to this ESP MAC.
 String readDeviceVersion(const String& json, const String& mac) {
   String deviceKey = "\"" + mac + "\"";
   int devicePos = json.indexOf(deviceKey);
@@ -246,6 +249,68 @@ String readDeviceVersion(const String& json, const String& mac) {
   return readJsonValue(json.substring(versionPos), "version");
 }
 
+String readGeneralFirmwareVersion(const String& json) {
+  int generalPos = json.indexOf("\"general_version\"");
+  if (generalPos < 0) return "";
+
+  int inoPos = json.indexOf("\"ino\"", generalPos);
+  if (inoPos < 0) return "";
+
+  return readJsonValue(json.substring(inoPos), "ino");
+}
+
+void checkForFirmwareUpdate(const String& remoteConfig) {
+  String remoteVersion = readGeneralFirmwareVersion(remoteConfig);
+
+  if (remoteVersion.length() == 0) {
+    Serial.println("Firmware version not found in config.json.");
+    return;
+  }
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("FIRMWARE VERSION CHECK");
+  Serial.println("==============================");
+  Serial.print("Local firmware:  ");
+  Serial.println(LOCAL_FIRMWARE_VERSION);
+  Serial.print("GitHub firmware: ");
+  Serial.println(remoteVersion);
+
+  if (remoteVersion == LOCAL_FIRMWARE_VERSION) {
+    Serial.println("Firmware is up to date.");
+    Serial.println("==============================");
+    return;
+  }
+
+  Serial.println("New firmware detected!");
+  Serial.println("Starting OTA update...");
+  Serial.println("==============================");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  String url = String(FIRMWARE_URL) + "?pygit=" + String(millis());
+
+  t_httpUpdate_return result = ESPhttpUpdate.update(client, url);
+
+  switch (result) {
+    case HTTP_UPDATE_FAILED:
+      Serial.print("OTA update FAILED. Error: ");
+      Serial.println(ESPhttpUpdate.getLastError());
+      Serial.print("Message: ");
+      Serial.println(ESPhttpUpdate.getLastErrorString());
+      break;
+
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("OTA: No update available.");
+      break;
+
+    case HTTP_UPDATE_OK:
+      Serial.println("OTA update successful. Restarting...");
+      break;
+  }
+}
+
 void checkGitHubConfig() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("ERROR: WiFi is not connected.");
@@ -256,7 +321,7 @@ void checkGitHubConfig() {
   Serial.println("Checking GitHub config.json...");
 
   WiFiClientSecure client;
-  client.setInsecure(); // Temporary test only.
+  client.setInsecure();
 
   HTTPClient http;
 
@@ -318,6 +383,8 @@ void checkGitHubConfig() {
   Serial.println(version);
   Serial.println("==============================");
   Serial.println("CONFIG CHECK SUCCESSFUL!");
+
+  checkForFirmwareUpdate(payload);
 }
 
 void setup() {
@@ -336,14 +403,11 @@ void setup() {
 
   Serial.println("LittleFS mounted.");
 
-  // Check the built-in FLASH button AFTER normal firmware startup.
-  // This avoids interfering with the ESP8266 bootloader.
   if (setupButtonRequested()) {
     setupWiFiPortal();
     return;
   }
 
-  // If credentials are missing/invalid, start the browser setup portal.
   if (!loadWiFiConfig()) {
     setupWiFiPortal();
     return;
@@ -351,18 +415,42 @@ void setup() {
 
   Serial.println("Wi-Fi configuration loaded from LittleFS.");
 
-  // Normal boot: connect using the saved local credentials.
   if (!connectToWiFi()) {
-    // If the saved Wi-Fi no longer works, allow reconfiguration
-    // without requiring another firmware upload.
     setupWiFiPortal();
     return;
   }
 
-  // Phase 1 test:
-  // connect WiFi -> identify device -> read remote config -> print version.
+  Serial.println();
+  Serial.print("PyGit Firmware ");
+  Serial.println(LOCAL_FIRMWARE_VERSION);
+  Serial.println("Hello from node_github_test.ino!");
+
   checkGitHubConfig();
+  lastUpdateCheck = millis();
 }
 
 void loop() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (millis() - lastUpdateCheck >= UPDATE_CHECK_INTERVAL) {
+      lastUpdateCheck = millis();
+      checkGitHubConfig();
+    }
+  } else {
+    static unsigned long lastReconnectAttempt = 0;
+
+    if (millis() - lastReconnectAttempt >= 10000) {
+      lastReconnectAttempt = millis();
+
+      Serial.println();
+      Serial.println("WiFi disconnected. Reconnecting...");
+
+      WiFi.disconnect();
+      WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+
+      if (connectToWiFi()) {
+        checkGitHubConfig();
+        lastUpdateCheck = millis();
+      }
+    }
+  }
 }
