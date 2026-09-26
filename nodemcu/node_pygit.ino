@@ -15,6 +15,7 @@ const uint8_t TRIGGER_PIN = 14;            // D5 / GPIO14 - coinslot ON/OFF cont
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
 const unsigned long COIN_DEBOUNCE_MS = 100;
+const unsigned long COIN_IDLE_TIMEOUT_MS = 10000;
 
 const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
@@ -24,6 +25,7 @@ unsigned long lastCheck = 0;
 volatile unsigned long lastCoinInterrupt = 0;
 volatile bool coinPulseDetected = false;
 unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
+unsigned long lastCoinActivity = 0;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
@@ -492,6 +494,7 @@ void clearActiveClient(const char* reason) {
   if (controlClient) controlClient.stop();
 
   activeClient = false;
+  lastCoinActivity = 0;
   digitalWrite(TRIGGER_PIN, LOW);   // Coinslot OFF when no PC is active.
   activePcName = "";
   activePcIP = IPAddress(0, 0, 0, 0);
@@ -585,7 +588,8 @@ void processRequest(const String& line, WiFiClient& client) {
   }
 
   activeClient = true;
-  digitalWrite(TRIGGER_PIN, LOW);  // Coinslot ON for the accepted PC.
+  lastCoinActivity = millis();
+  digitalWrite(TRIGGER_PIN, HIGH); // Coinslot ON for the accepted PC.
   activePcName = pcName;
   activePcIP = pcIP;
   activePcPort = pcPort;
@@ -681,16 +685,18 @@ void handleCoinPulse() {
   Serial.print(timeInputPerPulse);
   Serial.println(" seconds");
 
-  // GPIO14 controls the coinslot. HIGH = ON, LOW = OFF.
-  if (digitalRead(TRIGGER_PIN) != HIGH) {
-    Serial.println("Coinslot OFF (GPIO14 LOW). Coin ignored.");
+  if (!activeClient) {
+    Serial.println("No active PC. Coin ignored.");
     Serial.println("------------------------------");
     return;
   }
 
-  Serial.println("Coinslot ON (GPIO14 HIGH).");
+  // A valid coin pulse from the active PC wakes/keeps the coinslot ON.
+  digitalWrite(TRIGGER_PIN, HIGH);
+  lastCoinActivity = millis();
 
-  if (!activeClient) {
+  Serial.println("Coinslot ON (GPIO14 HIGH). Timer reset to 10 seconds.");
+
     Serial.println("No active PC. Coin ignored.");
     Serial.println("------------------------------");
     return;
@@ -730,9 +736,9 @@ void setup() {
   pinMode(COIN_PIN, INPUT_PULLUP);
 
   // GPIO14 controls the coinslot.
-  // Keep it OFF during startup. HIGH will turn the coinslot ON.
+  // Keep it OFF during startup. HIGH turns the coinslot ON.
   pinMode(TRIGGER_PIN, OUTPUT);
-  digitalWrite(TRIGGER_PIN, HIGH);
+  digitalWrite(TRIGGER_PIN, LOW);
 
   attachInterrupt(digitalPinToInterrupt(COIN_PIN), coinInterrupt, FALLING);
 
@@ -765,7 +771,7 @@ void setup() {
   Serial.println("Control server: TCP 5001");
   Serial.println("PC receiver: TCP 5000");
   Serial.println("One-PC lock: ENABLED");
-  Serial.println("Waiting for Side A receiver...");
+  Serial.println("Waiting for Side A / Side B receiver...");
 
   lastCheck = millis();
 }
@@ -778,6 +784,14 @@ void loop() {
 
   handleControlServer();
   handleCoinPulse();
+
+  // Turn the coinslot OFF after 10 seconds with no coin activity.
+  // The active PC lock is intentionally kept; only GPIO14 is turned OFF.
+  if (activeClient && digitalRead(TRIGGER_PIN) == HIGH &&
+      lastCoinActivity > 0 && millis() - lastCoinActivity >= COIN_IDLE_TIMEOUT_MS) {
+    digitalWrite(TRIGGER_PIN, LOW);
+    Serial.println("10 seconds without coins. Coinslot OFF (GPIO14 LOW).");
+  }
 
   if (millis() - lastCheck >= CHECK_INTERVAL) {
     lastCheck = millis();
