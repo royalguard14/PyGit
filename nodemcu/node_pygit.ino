@@ -6,19 +6,14 @@
 #include <ESP8266httpUpdate.h>
 
 const char* WIFI_CONFIG = "/wifi_config.json";
+const char* DEVICE_CONFIG_FILE = "/device_config.json";
 
-// Built-in FLASH button on most NodeMCU ESP8266 boards.
-const int SETUP_BUTTON_PIN = 0; // GPIO0 / D3
-
-// After normal boot, give the user a short window to press FLASH
-// and enter Wi-Fi setup mode without interfering with the bootloader.
+const int SETUP_BUTTON_PIN = 0;
 const unsigned long SETUP_WINDOW = 5000;
 const unsigned long UPDATE_CHECK_INTERVAL = 60000;
 unsigned long lastUpdateCheck = 0;
 
-// Version of the firmware currently flashed on this base device.
-// OTA build trigger test: 1.0.1
-// Change this when creating a new firmware release.
+// Firmware version of this physically flashed base firmware.
 const char* LOCAL_FIRMWARE_VERSION = "1.0.1";
 
 const char* FIRMWARE_URL =
@@ -27,19 +22,14 @@ const char* FIRMWARE_URL =
 const char* configURL =
   "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
-// OTA build trigger: rebuild after workflow compiler fix.
-
 String wifiSSID = "";
 String wifiPassword = "";
 
 ESP8266WebServer server(80);
 
-// Simple JSON value reader.
-// This avoids requiring the ArduinoJson library.
 String readJsonValue(const String& json, const String& key) {
-  String searchKey = """ + key + """;
+  String searchKey = "\"" + key + "\"";
   int keyPos = json.indexOf(searchKey);
-
   if (keyPos < 0) return "";
 
   int colonPos = json.indexOf(':', keyPos + searchKey.length());
@@ -54,9 +44,77 @@ String readJsonValue(const String& json, const String& key) {
   return json.substring(quoteStart + 1, quoteEnd);
 }
 
+String readDeviceObject(const String& json, const String& mac) {
+  String deviceKey = "\"" + mac + "\"";
+  int devicePos = json.indexOf(deviceKey);
+  if (devicePos < 0) return "";
+
+  int objectStart = json.indexOf('{', devicePos);
+  if (objectStart < 0) return "";
+
+  int objectEnd = json.indexOf('}', objectStart);
+  if (objectEnd < 0) return "";
+
+  return json.substring(objectStart, objectEnd + 1);
+}
+
+String readGeneralFirmwareVersion(const String& json) {
+  int generalPos = json.indexOf("\"general_version\"");
+  if (generalPos < 0) return "";
+
+  int inoPos = json.indexOf("\"ino\"", generalPos);
+  if (inoPos < 0) return "";
+
+  return readJsonValue(json.substring(inoPos), "ino");
+}
+
+String readDeviceConfigVersion(const String& deviceObject) {
+  return readJsonValue(deviceObject, "version");
+}
+
+void saveDeviceConfig(const String& deviceObject) {
+  File f = LittleFS.open(DEVICE_CONFIG_FILE, "w");
+  if (!f) {
+    Serial.println("WARNING: Cannot save device configuration.");
+    return;
+  }
+
+  f.print(deviceObject);
+  f.close();
+  Serial.println("Device configuration saved to LittleFS.");
+}
+
+void showDeviceConfig(const String& deviceObject) {
+  Serial.println();
+  Serial.println("------------------------------");
+  Serial.println("DEVICE CONFIGURATION");
+  Serial.println("------------------------------");
+  Serial.print("Config version: ");
+  Serial.println(readJsonValue(deviceObject, "version"));
+
+  String shopName = readJsonValue(deviceObject, "shop_name");
+  String googleSheet = readJsonValue(deviceObject, "google_sheet");
+  String timeInput = readJsonValue(deviceObject, "time_input_per_pulse");
+
+  if (shopName.length()) {
+    Serial.print("Shop name: ");
+    Serial.println(shopName);
+  }
+  if (googleSheet.length()) {
+    Serial.print("Google Sheet: ");
+    Serial.println(googleSheet);
+  }
+  if (timeInput.length()) {
+    Serial.print("Time input/pulse: ");
+    Serial.println(timeInput);
+  }
+
+  // Do not print passwords to Serial.
+  Serial.println("------------------------------");
+}
+
 bool saveWiFiConfig(const String& ssid, const String& password) {
   File f = LittleFS.open(WIFI_CONFIG, "w");
-
   if (!f) {
     Serial.println("ERROR: Cannot create /wifi_config.json.");
     return false;
@@ -69,26 +127,21 @@ bool saveWiFiConfig(const String& ssid, const String& password) {
   f.print("  \"password\": \"");
   f.print(password);
   f.println("\"");
-
   f.println("}");
-
   f.close();
 
   wifiSSID = ssid;
   wifiPassword = password;
-
   Serial.println("Wi-Fi configuration saved to LittleFS.");
   return true;
 }
 
 bool setupButtonRequested() {
   pinMode(SETUP_BUTTON_PIN, INPUT_PULLUP);
-
   Serial.println();
   Serial.println("Press FLASH within 5 seconds for Wi-Fi setup...");
 
   unsigned long startTime = millis();
-
   while (millis() - startTime < SETUP_WINDOW) {
     if (digitalRead(SETUP_BUTTON_PIN) == LOW) {
       Serial.println("FLASH button detected.");
@@ -96,7 +149,6 @@ bool setupButtonRequested() {
       delay(300);
       return true;
     }
-
     delay(10);
   }
 
@@ -111,7 +163,6 @@ bool loadWiFiConfig() {
   }
 
   File f = LittleFS.open(WIFI_CONFIG, "r");
-
   if (!f) {
     Serial.println("ERROR: Cannot open /wifi_config.json.");
     return false;
@@ -139,11 +190,10 @@ void setupWiFiPortal() {
 
   WiFi.disconnect();
   delay(300);
-
   WiFi.mode(WIFI_AP);
+
   String apName = "PyGit-" + WiFi.macAddress();
   apName.replace(":", "");
-
   WiFi.softAP(apName.c_str());
 
   IPAddress apIP = WiFi.softAPIP();
@@ -161,14 +211,11 @@ void setupWiFiPortal() {
       "<style>body{font-family:Arial;max-width:420px;margin:40px auto;padding:20px}"
       "input{width:100%;padding:12px;margin:8px 0;box-sizing:border-box}"
       "button{width:100%;padding:12px;margin-top:10px;font-size:16px}</style>"
-      "</head><body>"
-      "<h2>PyGit NodeMCU Setup</h2>"
+      "</head><body><h2>PyGit NodeMCU Setup</h2>"
       "<p>Enter the Wi-Fi credentials for this device.</p>"
       "<form method='POST' action='/save'>"
-      "<label>Wi-Fi Name (SSID)</label>"
-      "<input name='ssid' required>"
-      "<label>Password</label>"
-      "<input name='password' type='password'>"
+      "<label>Wi-Fi Name (SSID)</label><input name='ssid' required>"
+      "<label>Password</label><input name='password' type='password'>"
       "<button type='submit'>Save & Connect</button>"
       "</form></body></html>";
 
@@ -178,7 +225,6 @@ void setupWiFiPortal() {
   server.on("/save", HTTP_POST, []() {
     String ssid = server.arg("ssid");
     String password = server.arg("password");
-
     ssid.trim();
 
     if (ssid.length() == 0) {
@@ -191,20 +237,16 @@ void setupWiFiPortal() {
       return;
     }
 
-    server.send(
-      200,
-      "text/html",
+    server.send(200, "text/html",
       "<html><body><h2>Wi-Fi saved!</h2>"
       "<p>The NodeMCU will restart and connect to the new network.</p>"
-      "</body></html>"
-    );
+      "</body></html>");
 
     delay(1500);
     ESP.restart();
   });
 
   server.begin();
-
   Serial.println("Wi-Fi setup portal started.");
   Serial.println("Waiting for Wi-Fi credentials...");
 
@@ -216,16 +258,13 @@ void setupWiFiPortal() {
 
 bool connectToWiFi() {
   Serial.print("Connecting to WiFi");
-
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
 
   int attempts = 0;
-
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
-
     attempts++;
 
     if (attempts >= 40) {
@@ -239,35 +278,9 @@ bool connectToWiFi() {
   Serial.println("WiFi connected!");
   Serial.print("IP: ");
   Serial.println(WiFi.localIP());
-
   Serial.print("Device MAC: ");
   Serial.println(WiFi.macAddress());
-
   return true;
-}
-
-// Finds the version belonging to this ESP MAC.
-String readDeviceVersion(const String& json, const String& mac) {
-  String deviceKey = """ + mac + """;
-  int devicePos = json.indexOf(deviceKey);
-
-  if (devicePos < 0) return "";
-
-  int versionPos = json.indexOf(""version"", devicePos);
-
-  if (versionPos < 0) return "";
-
-  return readJsonValue(json.substring(versionPos), "version");
-}
-
-String readGeneralFirmwareVersion(const String& json) {
-  int generalPos = json.indexOf(""general_version"");
-  if (generalPos < 0) return "";
-
-  int inoPos = json.indexOf(""ino"", generalPos);
-  if (inoPos < 0) return "";
-
-  return readJsonValue(json.substring(inoPos), "ino");
 }
 
 void checkForFirmwareUpdate(const String& remoteConfig) {
@@ -284,7 +297,7 @@ void checkForFirmwareUpdate(const String& remoteConfig) {
   Serial.println("==============================");
   Serial.print("Local firmware:  ");
   Serial.println(LOCAL_FIRMWARE_VERSION);
-  Serial.print("GitHub firmware: ");
+  Serial.print("GitHub general:  ");
   Serial.println(remoteVersion);
 
   if (remoteVersion == LOCAL_FIRMWARE_VERSION) {
@@ -301,7 +314,6 @@ void checkForFirmwareUpdate(const String& remoteConfig) {
   client.setInsecure();
 
   String url = String(FIRMWARE_URL) + "?pygit=" + String(millis());
-
   t_httpUpdate_return result = ESPhttpUpdate.update(client, url);
 
   switch (result) {
@@ -311,15 +323,58 @@ void checkForFirmwareUpdate(const String& remoteConfig) {
       Serial.print("Message: ");
       Serial.println(ESPhttpUpdate.getLastErrorString());
       break;
-
     case HTTP_UPDATE_NO_UPDATES:
       Serial.println("OTA: No update available.");
       break;
-
     case HTTP_UPDATE_OK:
       Serial.println("OTA update successful. Restarting...");
       break;
   }
+}
+
+void checkDeviceConfiguration(const String& remoteConfig) {
+  String deviceMAC = WiFi.macAddress();
+  String deviceObject = readDeviceObject(remoteConfig, deviceMAC);
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("DEVICE CONFIG CHECK");
+  Serial.println("==============================");
+
+  if (deviceObject.length() == 0) {
+    Serial.println("Device NOT found in config.json!");
+    Serial.print("MAC searched: ");
+    Serial.println(deviceMAC);
+    return;
+  }
+
+  String remoteConfigVersion = readDeviceConfigVersion(deviceObject);
+  String localConfigVersion = "";
+
+  if (LittleFS.exists(DEVICE_CONFIG_FILE)) {
+    File f = LittleFS.open(DEVICE_CONFIG_FILE, "r");
+    if (f) {
+      localConfigVersion = readDeviceConfigVersion(f.readString());
+      f.close();
+    }
+  }
+
+  Serial.print("MAC: ");
+  Serial.println(deviceMAC);
+  Serial.print("Local config:  ");
+  Serial.println(localConfigVersion.length() ? localConfigVersion : "(none)");
+  Serial.print("GitHub config: ");
+  Serial.println(remoteConfigVersion);
+
+  if (localConfigVersion != remoteConfigVersion) {
+    Serial.println("New device configuration detected.");
+    saveDeviceConfig(deviceObject);
+    showDeviceConfig(deviceObject);
+  } else {
+    Serial.println("Device configuration is up to date.");
+  }
+
+  Serial.println("==============================");
 }
 
 void checkGitHubConfig() {
@@ -333,11 +388,9 @@ void checkGitHubConfig() {
 
   WiFiClientSecure client;
   client.setInsecure();
-
   HTTPClient http;
 
   String url = String(configURL) + "&pygit=" + String(millis());
-
   Serial.print("Config URL: ");
   Serial.println(url);
 
@@ -353,7 +406,6 @@ void checkGitHubConfig() {
   http.addHeader("User-Agent", "PyGit-NodeMCU");
 
   int httpCode = http.GET();
-
   Serial.print("HTTP Code: ");
   Serial.println(httpCode);
 
@@ -369,33 +421,12 @@ void checkGitHubConfig() {
 
   Serial.println("config.json downloaded.");
 
-  String deviceMAC = WiFi.macAddress();
+  // IMPORTANT:
+  // devices[MAC].version is only the device configuration version.
+  // It NEVER triggers a firmware OTA.
+  checkDeviceConfiguration(payload);
 
-  Serial.print("Device MAC: ");
-  Serial.println(deviceMAC);
-
-  String version = readDeviceVersion(payload, deviceMAC);
-
-  if (version.length() == 0) {
-    Serial.println();
-    Serial.println("Device NOT found in config.json!");
-    Serial.print("MAC searched: ");
-    Serial.println(deviceMAC);
-    return;
-  }
-
-  Serial.println();
-  Serial.println("==============================");
-  Serial.println("DEVICE FOUND!");
-  Serial.println("==============================");
-  Serial.print("MAC: ");
-  Serial.println(deviceMAC);
-  Serial.print("Version: ");
-  Serial.println(version);
-  Serial.println("==============================");
-  Serial.println("CONFIG CHECK SUCCESSFUL!");
-
-  // Check the general firmware version after the config/device check.
+  // Only general_version.ino controls firmware OTA.
   checkForFirmwareUpdate(payload);
 }
 
@@ -415,14 +446,11 @@ void setup() {
 
   Serial.println("LittleFS mounted.");
 
-  // Check the built-in FLASH button AFTER normal firmware startup.
-  // This avoids interfering with the ESP8266 bootloader.
   if (setupButtonRequested()) {
     setupWiFiPortal();
     return;
   }
 
-  // If credentials are missing/invalid, start the browser setup portal.
   if (!loadWiFiConfig()) {
     setupWiFiPortal();
     return;
@@ -430,20 +458,15 @@ void setup() {
 
   Serial.println("Wi-Fi configuration loaded from LittleFS.");
 
-  // Normal boot: connect using the saved local credentials.
   if (!connectToWiFi()) {
-    // If the saved Wi-Fi no longer works, allow reconfiguration
-    // without requiring another firmware upload.
     setupWiFiPortal();
     return;
   }
 
-  // Phase 1 test:
-  // connect WiFi -> identify device -> read remote config -> print version.
   Serial.println();
-  Serial.println("Hello from PyGit 1.0.1!");
   Serial.print("PyGit Firmware ");
   Serial.println(LOCAL_FIRMWARE_VERSION);
+  Serial.println("Base firmware online.");
 
   checkGitHubConfig();
   lastUpdateCheck = millis();
@@ -456,8 +479,6 @@ void loop() {
       checkGitHubConfig();
     }
   } else {
-    // Try to reconnect. A successful reconnect will be followed by
-    // an immediate GitHub firmware/config check.
     static unsigned long lastReconnectAttempt = 0;
 
     if (millis() - lastReconnectAttempt >= 10000) {
@@ -465,7 +486,6 @@ void loop() {
 
       Serial.println();
       Serial.println("WiFi disconnected. Reconnecting...");
-
       WiFi.disconnect();
       WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
 
