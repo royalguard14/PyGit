@@ -10,7 +10,7 @@ const char* CONFIG_URL = "https://api.github.com/repos/royalguard14/PyGit/conten
 
 const uint8_t FLASH_BUTTON = 0;
 const uint8_t COIN_PIN = 12;               // D6 / GPIO12 - coinslot
-const uint8_t TRIGGER_PIN = 14;            // D5 / GPIO14 - physical trigger
+const uint8_t TRIGGER_PIN = 14;            // D5 / GPIO14 - coinslot ON/OFF control
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
 const unsigned long COIN_DEBOUNCE_MS = 100;
@@ -345,6 +345,7 @@ void clearActiveClient(const char* reason) {
   if (controlClient) controlClient.stop();
 
   activeClient = false;
+  digitalWrite(TRIGGER_PIN, HIGH);  // Coinslot OFF when no PC is active.
   activePcName = "";
   activePcIP = IPAddress(0, 0, 0, 0);
   activePcPort = DEFAULT_PC_PORT;
@@ -437,6 +438,7 @@ void processRequest(const String& line, WiFiClient& client) {
   }
 
   activeClient = true;
+  digitalWrite(TRIGGER_PIN, LOW);   // Coinslot ON for the accepted PC.
   activePcName = pcName;
   activePcIP = pcIP;
   activePcPort = pcPort;
@@ -532,14 +534,14 @@ void handleCoinPulse() {
   Serial.print(timeInputPerPulse);
   Serial.println(" seconds");
 
-  // GPIO14 remains the physical trigger. LOW means active.
+  // GPIO14 controls the coinslot. LOW = ON, HIGH = OFF.
   if (digitalRead(TRIGGER_PIN) != LOW) {
-    Serial.println("Trigger inactive (GPIO14 HIGH). Coin ignored.");
+    Serial.println("Coinslot OFF (GPIO14 HIGH). Coin ignored.");
     Serial.println("------------------------------");
     return;
   }
 
-  Serial.println("Trigger active (GPIO14 LOW).");
+  Serial.println("Coinslot ON (GPIO14 LOW).");
 
   if (!activeClient) {
     Serial.println("No active PC. Coin ignored.");
@@ -579,7 +581,11 @@ void setup() {
   loadLocalDeviceConfig();
 
   pinMode(COIN_PIN, INPUT_PULLUP);
-  pinMode(TRIGGER_PIN, INPUT_PULLUP);
+
+  // GPIO14 controls the coinslot.
+  // Keep it OFF during startup. LOW will turn the coinslot ON.
+  pinMode(TRIGGER_PIN, OUTPUT);
+  digitalWrite(TRIGGER_PIN, HIGH);
 
   attachInterrupt(digitalPinToInterrupt(COIN_PIN), coinInterrupt, FALLING);
 
@@ -598,8 +604,9 @@ void setup() {
 
   Serial.println("Coinslot input: D6 / GPIO12");
   Serial.println("Expected coin pulse: LOW for about 50 ms");
-  Serial.println("Trigger input: D5 / GPIO14");
-  Serial.println("Trigger active: LOW");
+  Serial.println("Coinslot control: D5 / GPIO14");
+  Serial.println("Coinslot ON: GPIO14 LOW");
+  Serial.println("Coinslot OFF: GPIO14 HIGH");
   Serial.println("Control server: TCP 5001");
   Serial.println("PC receiver: TCP 5000");
   Serial.println("One-PC lock: ENABLED");
