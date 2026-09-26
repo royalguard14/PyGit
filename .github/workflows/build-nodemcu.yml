@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'nodemcu/node_pygit.ino'
+      - 'nodemcu/node_github_test.ino'
       - '.github/workflows/build-nodemcu.yml'
   workflow_dispatch:
 
@@ -30,10 +30,10 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install esp8266:esp8266
 
-      - name: Compile NodeMCU firmware
+      - name: Compile deployable NodeMCU firmware
         run: |
           mkdir -p build/sketch
-          cp nodemcu/node_pygit.ino build/sketch/nodemcu.ino
+          cp nodemcu/node_github_test.ino build/sketch/nodemcu.ino
 
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
@@ -46,11 +46,11 @@ jobs:
           import json
           import re
 
-          source = open("nodemcu/node_pygit.ino", "r", encoding="utf-8").read()
+          source = open("nodemcu/node_github_test.ino", "r", encoding="utf-8").read()
           match = re.search(r'LOCAL_FIRMWARE_VERSION\s*=\s*"([^"]+)"', source)
 
           if not match:
-              raise SystemExit("LOCAL_FIRMWARE_VERSION not found in node_pygit.ino")
+              raise SystemExit("LOCAL_FIRMWARE_VERSION not found in node_github_test.ino")
 
           version = match.group(1)
 
