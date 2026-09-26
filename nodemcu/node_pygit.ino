@@ -17,6 +17,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 60000;
 unsigned long lastUpdateCheck = 0;
 
 // Version of the firmware currently flashed on this base device.
+// OTA build trigger test: 1.0.1
 // Change this when creating a new firmware release.
 const char* LOCAL_FIRMWARE_VERSION = "1.0.1";
 
