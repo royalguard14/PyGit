@@ -319,11 +319,20 @@ bool downloadFirmware(const String& expectedHash) {
 }
 
 void checkPyGitCodeUpdate() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
   Serial.println("\n==============================");
   Serial.println("PYGIT CODE UPDATE CHECK");
   Serial.println("==============================");
+  Serial.print("[PYGIT] WiFi status at updater: ");
+  Serial.println((int)WiFi.status());
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[PYGIT] WiFi disconnected before firmware check. Reconnecting...");
+    if (!connectWiFi()) {
+      Serial.println("[PYGIT] Reconnect failed. Update check skipped.");
+      Serial.println("==============================");
+      return;
+    }
+  }
 
   Serial.println("[PYGIT] Entering firmware hash check...");
   String remoteHash = remoteFirmwareHash();
