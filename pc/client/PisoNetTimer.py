@@ -1,4 +1,4 @@
-VERSION = "1.4.6"
+VERSION = "1.4.7"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
@@ -39,6 +39,7 @@ canvas = None
 timer_text = None
 status_text = None
 background_photo = None
+background_item = None
 current_image_index = 0
 shop_name = "PisoNet"
 operation_text = "SHOP OPERATION: 8:00 AM - 10:30 PM"
@@ -58,18 +59,23 @@ def load_detail_config():
     except Exception:
         data = {}
 
-    PC_NAME = data.get("PcName", PC_NAME)
-
+    PC_NAME = str(data.get("PcName", PC_NAME)).strip() or PC_NAME
     shop_name = str(data.get("pisonetName", "PisoNet")).strip() or "PisoNet"
 
     def parse_hhmm(value, fallback):
         try:
             text = str(value).strip()
             hour, minute = map(int, text.split(":"))
+
+            # Accept 24:00 as midnight/end-of-day.
+            if hour == 24 and minute == 0:
+                return 24 * 60
+
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return hour * 60 + minute
         except Exception:
             pass
+
         return fallback
 
     open_minutes = parse_hhmm(data.get("time_open", "08:00"), 8 * 60)
@@ -77,13 +83,18 @@ def load_detail_config():
     dev_btn = bool(data.get("dev_btn", True))
 
     def display_time(total):
+        if total == 24 * 60:
+            return "12:00 AM"
         hour = (total // 60) % 24
         minute = total % 60
         suffix = "AM" if hour < 12 else "PM"
         display_hour = hour % 12 or 12
         return f"{display_hour}:{minute:02d} {suffix}"
 
-    operation_text = f"SHOP OPERATION: {display_time(open_minutes)} - {display_time(close_minutes)}"
+    operation_text = (
+        f"SHOP OPERATION: {display_time(open_minutes)} - "
+        f"{display_time(close_minutes)}"
+    )
 
 # ================= TIME =================
 def get_ntp_time():
@@ -109,16 +120,21 @@ def get_shop_status():
 
     current = now.hour * 60 + now.minute
 
-    # 00:00 -> 12:00 is handled normally.
-    # If open == close, treat it as a 24-hour schedule.
+    # 24:00 means midnight at the end of the day.
+    normalized_open = open_minutes % (24 * 60)
+    normalized_close = close_minutes % (24 * 60)
+
+    # Same start/end means 24-hour operation.
     if open_minutes == close_minutes:
         return "OPEN", now
 
-    # Supports schedules that cross midnight, e.g. 20:00 -> 04:00.
-    if open_minutes < close_minutes:
-        is_open = open_minutes <= current < close_minutes
+    if close_minutes == 24 * 60:
+        is_open = current >= normalized_open
+    elif open_minutes < close_minutes:
+        is_open = normalized_open <= current < normalized_close
     else:
-        is_open = current >= open_minutes or current < close_minutes
+        # Overnight schedule, e.g. 20:00 -> 04:00.
+        is_open = current >= normalized_open or current < normalized_close
 
     return ("OPEN" if is_open else "CLOSED"), now
 
@@ -341,7 +357,7 @@ def format_time(seconds):
 def update_background():
     global background_photo, current_image_index
 
-    if not root or not canvas:
+    if not root or not canvas or not background_item:
         return
 
     width = max(1, root.winfo_width())
@@ -350,6 +366,7 @@ def update_background():
     if images:
         try:
             path = images[current_image_index % len(images)]
+
             with Image.open(path) as source:
                 image = source.convert("RGB")
                 image = ImageOps.fit(
@@ -359,13 +376,13 @@ def update_background():
                 )
 
             background_photo = ImageTk.PhotoImage(image)
-            canvas.itemconfig("background", image=background_photo)
+            canvas.itemconfig(background_item, image=background_photo)
         except Exception:
-            canvas.itemconfig("background", image="")
-            canvas.tag_lower("background")
+            canvas.itemconfig(background_item, image="")
     else:
-        canvas.itemconfig("background", image="")
-        canvas.tag_lower("background")
+        canvas.itemconfig(background_item, image="")
+
+    canvas.tag_lower(background_item)
 
 def next_background():
     global current_image_index
@@ -382,7 +399,7 @@ def next_background():
     root.after(SLIDE_INTERVAL * 1000, next_background)
 
 def build_main_ui():
-    global root, canvas, timer_text, status_text
+    global root, canvas, timer_text, status_text, background_item
 
     root = tk.Tk()
     root.title("PisoNet Client")
@@ -399,12 +416,13 @@ def build_main_ui():
     )
     canvas.pack(fill="both", expand=True)
 
-    canvas.create_rectangle(
-        0, 0,
-        root.winfo_screenwidth(),
-        root.winfo_screenheight(),
-        fill="black",
-        outline="",
+    # This must be an IMAGE item, not a rectangle.
+    # A rectangle does not support the Canvas -image option.
+    background_item = canvas.create_image(
+        root.winfo_screenwidth() // 2,
+        root.winfo_screenheight() // 2,
+        image="",
+        anchor="center",
         tags="background"
     )
 
