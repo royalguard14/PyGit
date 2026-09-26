@@ -9,13 +9,14 @@ const char* DEVICE_CONFIG_FILE = "/device_config.json";
 const char* CONFIG_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
 const uint8_t FLASH_BUTTON = 0;
-const uint8_t COIN_PIN = 12;              // D6 / GPIO12 - coinslot
-const uint8_t TRIGGER_PIN = 14;            // D5 / GPIO14 - client trigger
+const uint8_t COIN_PIN = 12;               // D6 / GPIO12 - coinslot
+const uint8_t TRIGGER_PIN = 14;            // D5 / GPIO14 - physical trigger
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
 const unsigned long COIN_DEBOUNCE_MS = 100;
 
-const uint16_t COIN_SERVER_PORT = 5001;
+const uint16_t CONTROL_PORT = 5001;
+const uint16_t DEFAULT_PC_PORT = 5000;
 const unsigned long DEFAULT_TIME_PER_PULSE = 500;
 
 unsigned long lastCheck = 0;
@@ -25,24 +26,31 @@ unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
-WiFiServer coinServer(COIN_SERVER_PORT);
-WiFiClient coinClient;
+WiFiServer controlServer(CONTROL_PORT);
+
+WiFiClient controlClient;
+WiFiClient receiverClient;
+
+bool activeClient = false;
+String activePcName = "";
+IPAddress activePcIP;
+uint16_t activePcPort = DEFAULT_PC_PORT;
 
 String jsonValue(const String& json, const String& key) {
-  String token = "\"" + key + "\"";
+  String token = """ + key + """;
   int p = json.indexOf(token);
   if (p < 0) return "";
   p = json.indexOf(':', p + token.length());
   if (p < 0) return "";
-  int a = json.indexOf('\"', p + 1);
+  int a = json.indexOf('"', p + 1);
   if (a < 0) return "";
-  int b = json.indexOf('\"', a + 1);
+  int b = json.indexOf('"', a + 1);
   if (b < 0) return "";
   return json.substring(a + 1, b);
 }
 
 String deviceObject(const String& json, const String& mac) {
-  int p = json.indexOf("\"" + mac + "\"");
+  int p = json.indexOf(""" + mac + """);
   if (p < 0) return "";
   int start = json.indexOf('{', p);
   if (start < 0) return "";
@@ -54,10 +62,10 @@ String deviceObject(const String& json, const String& mac) {
     if (quoted) {
       if (escaped) escaped = false;
       else if (c == '\\') escaped = true;
-      else if (c == '\"') quoted = false;
+      else if (c == '"') quoted = false;
       continue;
     }
-    if (c == '\"') quoted = true;
+    if (c == '"') quoted = true;
     else if (c == '{') depth++;
     else if (c == '}' && --depth == 0) return json.substring(start, i + 1);
   }
@@ -315,28 +323,192 @@ void ICACHE_RAM_ATTR coinInterrupt() {
 }
 
 void startCoinServer() {
-  coinServer.begin();
-  coinServer.setNoDelay(true);
+  controlServer.begin();
+  controlServer.setNoDelay(true);
 
-  Serial.print("Coin server: TCP port ");
-  Serial.println(COIN_SERVER_PORT);
+  Serial.print("Control server: TCP port ");
+  Serial.println(CONTROL_PORT);
 }
 
-void handleCoinClient() {
-  if (!coinClient || !coinClient.connected()) {
-    if (coinClient) coinClient.stop();
-
-    WiFiClient newClient = coinServer.available();
-
-    if (newClient) {
-      coinClient = newClient;
-      Serial.println("Coin receiver client connected.");
-      coinClient.println("PYGIT READY");
-    }
+void clearActiveClient(const char* reason) {
+  if (activeClient) {
+    Serial.println();
+    Serial.println("------------------------------");
+    Serial.print("RELEASING ACTIVE CLIENT: ");
+    Serial.println(activePcName);
+    Serial.print("Reason: ");
+    Serial.println(reason);
+    Serial.println("------------------------------");
   }
 
-  if (coinClient && coinClient.connected() && coinClient.available()) {
-    while (coinClient.available()) coinClient.read();
+  if (receiverClient) receiverClient.stop();
+  if (controlClient) controlClient.stop();
+
+  activeClient = false;
+  activePcName = "";
+  activePcIP = IPAddress(0, 0, 0, 0);
+  activePcPort = DEFAULT_PC_PORT;
+}
+
+bool connectToPCReceiver() {
+  if (!activeClient) return false;
+
+  if (receiverClient && receiverClient.connected()) return true;
+
+  if (receiverClient) receiverClient.stop();
+
+  Serial.print("Connecting to PC receiver: ");
+  Serial.print(activePcIP);
+  Serial.print(":");
+  Serial.println(activePcPort);
+
+  if (!receiverClient.connect(activePcIP, activePcPort)) {
+    Serial.println("PC receiver connection FAILED.");
+    return false;
+  }
+
+  receiverClient.setNoDelay(true);
+  receiverClient.println("PYGIT READY");
+
+  Serial.println("PC receiver connected.");
+  return true;
+}
+
+void processRequest(const String& line, WiFiClient& client) {
+  int p1 = line.indexOf('|');
+  int p2 = line.indexOf('|', p1 + 1);
+  int p3 = line.indexOf('|', p2 + 1);
+
+  if (p1 < 0 || p2 < 0 || p3 < 0) {
+    client.println("ERROR|INVALID REQUEST");
+    return;
+  }
+
+  String command = line.substring(0, p1);
+  String pcName = line.substring(p1 + 1, p2);
+  String pcIPText = line.substring(p2 + 1, p3);
+  String pcPortText = line.substring(p3 + 1);
+
+  command.trim();
+  pcName.trim();
+  pcIPText.trim();
+  pcPortText.trim();
+
+  if (command != "REQUEST") {
+    client.println("ERROR|UNKNOWN COMMAND");
+    return;
+  }
+
+  IPAddress pcIP;
+  if (!pcIP.fromString(pcIPText)) {
+    client.println("ERROR|INVALID IP");
+    return;
+  }
+
+  uint16_t pcPort = pcPortText.toInt();
+  if (pcPort == 0) pcPort = DEFAULT_PC_PORT;
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("CLIENT REQUEST");
+  Serial.println("==============================");
+  Serial.print("PC Name: "); Serial.println(pcName);
+  Serial.print("IP: "); Serial.println(pcIP);
+  Serial.print("Port: "); Serial.println(pcPort);
+
+  if (activeClient) {
+    if (activePcName == pcName && activePcIP == pcIP && activePcPort == pcPort) {
+      client.println("ACCEPTED|" + activePcName);
+      Serial.println("Same active client requested again.");
+      return;
+    }
+
+    client.print("REJECTED|ACTIVE|");
+    client.print(activePcName);
+    client.print("|");
+    client.print(activePcIP);
+    client.print("|");
+    client.println(activePcPort);
+
+    Serial.print("REQUEST REJECTED. Active client: ");
+    Serial.println(activePcName);
+    Serial.println("==============================");
+    return;
+  }
+
+  activeClient = true;
+  activePcName = pcName;
+  activePcIP = pcIP;
+  activePcPort = pcPort;
+
+  if (!connectToPCReceiver()) {
+    client.println("REJECTED|PC_UNREACHABLE");
+    clearActiveClient("PC receiver unreachable");
+    Serial.println("==============================");
+    return;
+  }
+
+  controlClient = client;
+  controlClient.setNoDelay(true);
+
+  client.print("ACCEPTED|");
+  client.println(activePcName);
+
+  Serial.println("REQUEST ACCEPTED.");
+  Serial.println("ACTIVE CLIENT:");
+  Serial.print("PC Name: "); Serial.println(activePcName);
+  Serial.print("IP: "); Serial.println(activePcIP);
+  Serial.print("Port: "); Serial.println(activePcPort);
+  Serial.println("Status: ACTIVE");
+  Serial.println("==============================");
+}
+
+void handleControlServer() {
+  if (activeClient) {
+    if (!controlClient || !controlClient.connected()) {
+      clearActiveClient("Control connection lost");
+    } else {
+      while (controlClient.available()) {
+        String line = controlClient.readStringUntil('\n');
+        line.trim();
+
+        if (line.startsWith("RELEASE|")) {
+          String pcName = line.substring(8);
+          pcName.trim();
+
+          if (pcName == activePcName) {
+            controlClient.println("RELEASED|" + activePcName);
+            clearActiveClient("Client requested release");
+            return;
+          }
+        }
+      }
+    }
+
+    return;
+  }
+
+  WiFiClient newClient = controlServer.available();
+
+  if (!newClient) return;
+
+  newClient.setTimeout(2);
+  newClient.setNoDelay(true);
+
+  String line = newClient.readStringUntil('\n');
+  line.trim();
+
+  if (!line.length()) {
+    newClient.stop();
+    return;
+  }
+
+  processRequest(line, newClient);
+
+  // If the request was rejected, this connection is no longer needed.
+  if (!activeClient) {
+    delay(10);
+    newClient.stop();
   }
 }
 
@@ -360,7 +532,7 @@ void handleCoinPulse() {
   Serial.print(timeInputPerPulse);
   Serial.println(" seconds");
 
-  // GPIO14 is the client trigger. LOW means the client is active/selected.
+  // GPIO14 remains the physical trigger. LOW means active.
   if (digitalRead(TRIGGER_PIN) != LOW) {
     Serial.println("Trigger inactive (GPIO14 HIGH). Coin ignored.");
     Serial.println("------------------------------");
@@ -369,14 +541,24 @@ void handleCoinPulse() {
 
   Serial.println("Trigger active (GPIO14 LOW).");
 
-  if (coinClient && coinClient.connected()) {
-    coinClient.print("COIN:");
-    coinClient.println(timeInputPerPulse);
-    Serial.println("Coin value sent to active receiver.");
-  } else {
-    Serial.println("No receiver connected. Coin ignored.");
+  if (!activeClient) {
+    Serial.println("No active PC. Coin ignored.");
+    Serial.println("------------------------------");
+    return;
   }
 
+  if (!receiverClient || !receiverClient.connected()) {
+    Serial.println("Active PC receiver disconnected. Releasing client.");
+    clearActiveClient("PC receiver connection lost");
+    Serial.println("------------------------------");
+    return;
+  }
+
+  receiverClient.print("COIN:");
+  receiverClient.println(timeInputPerPulse);
+
+  Serial.print("Coin value sent to ");
+  Serial.println(activePcName);
   Serial.println("------------------------------");
 }
 
@@ -418,6 +600,9 @@ void setup() {
   Serial.println("Expected coin pulse: LOW for about 50 ms");
   Serial.println("Trigger input: D5 / GPIO14");
   Serial.println("Trigger active: LOW");
+  Serial.println("Control server: TCP 5001");
+  Serial.println("PC receiver: TCP 5000");
+  Serial.println("One-PC lock: ENABLED");
   Serial.println("Waiting for Side A receiver...");
 
   lastCheck = millis();
@@ -429,7 +614,7 @@ void loop() {
     return;
   }
 
-  handleCoinClient();
+  handleControlServer();
   handleCoinPulse();
 
   if (millis() - lastCheck >= CHECK_INTERVAL) {
