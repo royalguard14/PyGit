@@ -13,6 +13,8 @@ const int SETUP_BUTTON_PIN = 0; // GPIO0 / D3
 // After normal boot, give the user a short window to press FLASH
 // and enter Wi-Fi setup mode without interfering with the bootloader.
 const unsigned long SETUP_WINDOW = 5000;
+const unsigned long UPDATE_CHECK_INTERVAL = 60000;
+unsigned long lastUpdateCheck = 0;
 
 // Version of the firmware currently flashed on this base device.
 // Change this when creating a new firmware release.
@@ -440,7 +442,33 @@ void setup() {
   Serial.println(LOCAL_FIRMWARE_VERSION);
 
   checkGitHubConfig();
+  lastUpdateCheck = millis();
 }
 
 void loop() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (millis() - lastUpdateCheck >= UPDATE_CHECK_INTERVAL) {
+      lastUpdateCheck = millis();
+      checkGitHubConfig();
+    }
+  } else {
+    // Try to reconnect. A successful reconnect will be followed by
+    // an immediate GitHub firmware/config check.
+    static unsigned long lastReconnectAttempt = 0;
+
+    if (millis() - lastReconnectAttempt >= 10000) {
+      lastReconnectAttempt = millis();
+
+      Serial.println();
+      Serial.println("WiFi disconnected. Reconnecting...");
+
+      WiFi.disconnect();
+      WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+
+      if (connectToWiFi()) {
+        checkGitHubConfig();
+        lastUpdateCheck = millis();
+      }
+    }
+  }
 }
