@@ -9,7 +9,8 @@ const char* DEVICE_CONFIG_FILE = "/device_config.json";
 const char* CONFIG_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
 const uint8_t FLASH_BUTTON = 0;
-const uint8_t COIN_PIN = 12;              // D6 / GPIO12
+const uint8_t COIN_PIN = 12;              // D6 / GPIO12 - coinslot
+const uint8_t TRIGGER_PIN = 14;            // D5 / GPIO14 - client trigger
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
 const unsigned long COIN_DEBOUNCE_MS = 100;
@@ -359,10 +360,19 @@ void handleCoinPulse() {
   Serial.print(timeInputPerPulse);
   Serial.println(" seconds");
 
+  // GPIO14 is the client trigger. LOW means the client is active/selected.
+  if (digitalRead(TRIGGER_PIN) != LOW) {
+    Serial.println("Trigger inactive (GPIO14 HIGH). Coin ignored.");
+    Serial.println("------------------------------");
+    return;
+  }
+
+  Serial.println("Trigger active (GPIO14 LOW).");
+
   if (coinClient && coinClient.connected()) {
     coinClient.print("COIN:");
     coinClient.println(timeInputPerPulse);
-    Serial.println("Coin value sent to receiver.");
+    Serial.println("Coin value sent to active receiver.");
   } else {
     Serial.println("No receiver connected. Coin ignored.");
   }
@@ -387,6 +397,8 @@ void setup() {
   loadLocalDeviceConfig();
 
   pinMode(COIN_PIN, INPUT_PULLUP);
+  pinMode(TRIGGER_PIN, INPUT_PULLUP);
+
   attachInterrupt(digitalPinToInterrupt(COIN_PIN), coinInterrupt, FALLING);
 
   if (flashPressedAtStartup()) startWiFiSetup();
@@ -403,7 +415,9 @@ void setup() {
   startCoinServer();
 
   Serial.println("Coinslot input: D6 / GPIO12");
-  Serial.println("Expected pulse: LOW for about 50 ms");
+  Serial.println("Expected coin pulse: LOW for about 50 ms");
+  Serial.println("Trigger input: D5 / GPIO14");
+  Serial.println("Trigger active: LOW");
   Serial.println("Waiting for Side A receiver...");
 
   lastCheck = millis();
