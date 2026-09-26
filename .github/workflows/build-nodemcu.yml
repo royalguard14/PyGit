@@ -40,39 +40,14 @@ jobs:
             --output-dir build \
             build/sketch
 
-      - name: Sync firmware version and publish firmware.bin
+      - name: Publish firmware.bin
         run: |
-          python3 - <<'PY'
-          import json
-          import re
-
-          source = open("nodemcu/node_github_test.ino", "r", encoding="utf-8").read()
-          match = re.search(r'LOCAL_FIRMWARE_VERSION\s*=\s*"([^"]+)"', source)
-
-          if not match:
-              raise SystemExit("LOCAL_FIRMWARE_VERSION not found in node_github_test.ino")
-
-          version = match.group(1)
-
-          with open("nodemcu/data/config.json", "r", encoding="utf-8") as f:
-              config = json.load(f)
-
-          config.setdefault("general_version", {})
-          config["general_version"]["ino"] = version
-
-          with open("nodemcu/data/config.json", "w", encoding="utf-8") as f:
-              json.dump(config, f, indent=2)
-              f.write("\n")
-
-          print("General firmware version:", version)
-          PY
-
           cp build/nodemcu.ino.bin nodemcu/firmware.bin
 
           git config user.name "PyGit Build Bot"
           git config user.email "actions@github.com"
 
-          git add nodemcu/firmware.bin nodemcu/data/config.json
+          git add nodemcu/firmware.bin
           git diff --cached --quiet && exit 0
           git commit -m "Build NodeMCU firmware"
           git push
