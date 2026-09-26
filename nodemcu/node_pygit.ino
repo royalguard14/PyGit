@@ -325,7 +325,9 @@ void checkPyGitCodeUpdate() {
   Serial.println("PYGIT CODE UPDATE CHECK");
   Serial.println("==============================");
 
+  Serial.println("[PYGIT] Entering firmware hash check...");
   String remoteHash = remoteFirmwareHash();
+  Serial.print("[PYGIT] Remote hash result: "); Serial.println(remoteHash.length() ? remoteHash : "(empty)");
   if (!remoteHash.length()) {
     Serial.println("Update check skipped.");
     Serial.println("==============================");
