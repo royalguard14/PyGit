@@ -9,8 +9,9 @@ const char* WIFI_CONFIG = "/wifi_config.json";
 // Built-in FLASH button on most NodeMCU ESP8266 boards.
 const int SETUP_BUTTON_PIN = 0; // GPIO0 / D3
 
-// Hold FLASH while pressing RESET to enter Wi-Fi setup mode.
-const unsigned long SETUP_HOLD_TIME = 1200;
+// After normal boot, give the user a short window to press FLASH
+// and enter Wi-Fi setup mode without interfering with the bootloader.
+const unsigned long SETUP_WINDOW = 5000;
 
 const char* configURL =
   "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
@@ -66,33 +67,26 @@ bool saveWiFiConfig(const String& ssid, const String& password) {
   return true;
 }
 
-bool setupButtonHeld() {
+bool setupButtonRequested() {
   pinMode(SETUP_BUTTON_PIN, INPUT_PULLUP);
 
-  // Give the board a short moment after reset, then check whether
-  // the built-in FLASH button is still being held.
-  delay(100);
-
-  if (digitalRead(SETUP_BUTTON_PIN) != LOW) {
-    return false;
-  }
-
   Serial.println();
-  Serial.println("FLASH button detected.");
-  Serial.println("Hold FLASH for Wi-Fi setup mode...");
+  Serial.println("Press FLASH within 5 seconds for Wi-Fi setup...");
 
-  unsigned long start = millis();
+  unsigned long startTime = millis();
 
-  while (digitalRead(SETUP_BUTTON_PIN) == LOW) {
-    if (millis() - start >= SETUP_HOLD_TIME) {
-      Serial.println("Wi-Fi setup requested.");
+  while (millis() - startTime < SETUP_WINDOW) {
+    if (digitalRead(SETUP_BUTTON_PIN) == LOW) {
+      Serial.println("FLASH button detected.");
+      Serial.println("Entering Wi-Fi setup mode...");
+      delay(300);
       return true;
     }
 
     delay(10);
   }
 
-  Serial.println("FLASH button released before setup mode.");
+  Serial.println("No Wi-Fi setup requested.");
   return false;
 }
 
@@ -342,10 +336,9 @@ void setup() {
 
   Serial.println("LittleFS mounted.");
 
-  // Built-in FLASH + RESET:
-  // Hold FLASH while pressing RESET, then keep holding it briefly.
-  // This forces Wi-Fi setup mode even when a valid Wi-Fi config exists.
-  if (setupButtonHeld()) {
+  // Check the built-in FLASH button AFTER normal firmware startup.
+  // This avoids interfering with the ESP8266 bootloader.
+  if (setupButtonRequested()) {
     setupWiFiPortal();
     return;
   }
