@@ -5,8 +5,8 @@
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 
-const char* githubURL =
-  "https://raw.githubusercontent.com/royalguard14/PyGit/refs/heads/main/nodemcu/node_test.txt";
+const char* configURL =
+  "https://raw.githubusercontent.com/royalguard14/PyGit/refs/heads/main/nodemcu/data/config.json";
 
 String wifiSSID = "";
 String wifiPassword = "";
@@ -14,7 +14,7 @@ String wifiPassword = "";
 // Simple JSON value reader.
 // This avoids requiring the ArduinoJson library.
 String readJsonValue(const String& json, const String& key) {
-  String searchKey = "\"" + key + "\"";
+  String searchKey = "\""+ key +"\"";
   int keyPos = json.indexOf(searchKey);
 
   if (keyPos < 0) {
@@ -69,58 +69,44 @@ bool loadWiFiConfig() {
   return true;
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
+// Finds the version belonging to this ESP MAC.
+// Current test config is intentionally simple and does not require
+// ArduinoJson yet.
+String readDeviceVersion(const String& json, const String& mac) {
+  String deviceKey = "\"" + mac + "\"";
+  int devicePos = json.indexOf(deviceKey);
 
-  Serial.println();
-  Serial.println("==============================");
-  Serial.println("NodeMCU GitHub Test");
-  Serial.println("==============================");
+  if (devicePos < 0) {
+    return "";
+  }
 
-  // Mount LittleFS.
-  if (!LittleFS.begin()) {
-    Serial.println("ERROR: LittleFS mount FAILED.");
+  int versionPos = json.indexOf("\"version\"", devicePos);
+
+  if (versionPos < 0) {
+    return "";
+  }
+
+  return readJsonValue(json.substring(versionPos), "version");
+}
+
+void checkGitHubConfig() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("ERROR: WiFi is not connected.");
     return;
   }
 
-  Serial.println("LittleFS mounted.");
-
-  // Load Wi-Fi credentials from LittleFS.
-  if (!loadWiFiConfig()) {
-    Serial.println("Wi-Fi configuration FAILED.");
-    return;
-  }
-
-  Serial.println("Wi-Fi configuration loaded from LittleFS.");
-
-  Serial.print("Connecting to WiFi");
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
   Serial.println();
-  Serial.println("WiFi connected!");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
-
-  Serial.println();
-  Serial.println("Connecting to GitHub...");
+  Serial.println("Checking GitHub config.json...");
 
   WiFiClientSecure client;
-  client.setInsecure(); // Temporary connectivity test only.
+  client.setInsecure(); // Temporary test only.
 
   HTTPClient http;
 
   // Cache-busting helps request the current GitHub file.
-  String url = String(githubURL) + "?pygit=" + String(millis());
+  String url = String(configURL) + "?pygit=" + String(millis());
 
-  Serial.print("URL: ");
+  Serial.print("Config URL: ");
   Serial.println(url);
 
   if (!http.begin(client, url)) {
@@ -135,25 +121,101 @@ void setup() {
   Serial.print("HTTP Code: ");
   Serial.println(httpCode);
 
-  String payload = http.getString();
-
-  if (httpCode == HTTP_CODE_OK) {
-    Serial.println();
-    Serial.println("===== GITHUB CONTENT =====");
-    Serial.println(payload);
-    Serial.println("==========================");
-    Serial.println();
-
-    Serial.println("TEST SUCCESSFUL!");
-  } else {
-    Serial.println();
-    Serial.println("GitHub download FAILED.");
-    Serial.println("===== SERVER RESPONSE =====");
-    Serial.println(payload);
-    Serial.println("==========================");
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.println("GitHub config download FAILED.");
+    Serial.println(http.getString());
+    http.end();
+    return;
   }
 
+  String payload = http.getString();
   http.end();
+
+  Serial.println("config.json downloaded.");
+
+  String deviceMAC = WiFi.macAddress();
+
+  Serial.print("Device MAC: ");
+  Serial.println(deviceMAC);
+
+  String version = readDeviceVersion(payload, deviceMAC);
+
+  if (version.length() == 0) {
+    Serial.println();
+    Serial.println("Device NOT found in config.json!");
+    Serial.print("MAC searched: ");
+    Serial.println(deviceMAC);
+    return;
+  }
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("DEVICE FOUND!");
+  Serial.println("==============================");
+  Serial.print("MAC: ");
+  Serial.println(deviceMAC);
+  Serial.print("Version: ");
+  Serial.println(version);
+  Serial.println("==============================");
+  Serial.println("CONFIG CHECK SUCCESSFUL!");
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("NodeMCU GitHub Config Test");
+  Serial.println("==============================");
+
+  // Mount LittleFS.
+  if (!LittleFS.begin()) {
+    Serial.println("ERROR: LittleFS mount FAILED.");
+    return;
+  }
+
+  Serial.println("LittleFS mounted.");
+
+  // Load Wi-Fi credentials from local wifi_config.json.
+  if (!loadWiFiConfig()) {
+    Serial.println("Wi-Fi configuration FAILED.");
+    return;
+  }
+
+  Serial.println("Wi-Fi configuration loaded from LittleFS.");
+
+  Serial.print("Connecting to WiFi");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+
+  int attempts = 0;
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+
+    attempts++;
+
+    if (attempts >= 40) {
+      Serial.println();
+      Serial.println("WiFi connection timeout!");
+      return;
+    }
+  }
+
+  Serial.println();
+  Serial.println("WiFi connected!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+
+  Serial.print("Device MAC: ");
+  Serial.println(WiFi.macAddress());
+
+  // Phase 1 test:
+  // connect WiFi -> identify device -> read remote config -> print version.
+  checkGitHubConfig();
 }
 
 void loop() {
