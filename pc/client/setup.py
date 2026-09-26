@@ -1,402 +1,151 @@
+import ctypes
 import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
-import time
 import urllib.error
 import urllib.request
 
-GITHUB_RAW = "https://raw.githubusercontent.com/royalguard14/PyGit/main/pc/client/"
-CHECK_INTERVAL = 60
+GITHUB_BASE = "https://raw.githubusercontent.com/royalguard14/PyGit/main/pc/client/"
+CONTROL_URL = GITHUB_BASE + "control.json"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RUNTIME_DIR = os.path.join(BASE_DIR, ".pygit_runtime")
-RUNTIME_CODE = os.path.join(RUNTIME_DIR, "code.py")
-RUNTIME_CONTROL = os.path.join(RUNTIME_DIR, "control.json")
-RUNTIME_REQUIREMENTS = os.path.join(RUNTIME_DIR, "requirements.txt")
-BACKUP_CODE = os.path.join(RUNTIME_DIR, "code.previous.py")
-LOG_FILE = os.path.join(RUNTIME_DIR, "pygit.log")
-
-
-class GitHubFetchError(Exception):
-    pass
+APP_DIR = os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "PisoNetClient")
+APP_EXE = os.path.join(APP_DIR, "PisoNetClient.exe")
+LOCAL_CONTROL = os.path.join(APP_DIR, "control.json")
+LOG_FILE = os.path.join(APP_DIR, "setup.log")
+STARTUP_DIR = os.path.join(os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+FIREWALL_RULE = "PisoNet Client TCP 5000"
 
 
 def log(message):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{timestamp}] {message}"
-    try:
-        os.makedirs(RUNTIME_DIR, exist_ok=True)
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError:
-        pass
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(message + "\n")
 
 
-def get_remote(path):
-    path = path.lstrip("/")
-    separator = "&" if "?" in path else "?"
-    url = GITHUB_RAW + path + f"{separator}_pygit={time.time_ns()}"
+def require_admin():
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        raise PermissionError("Administrator privileges are required.")
 
+
+def fetch_text(url):
     request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "PyGit-Live/5.1",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        },
+        url + ("&" if "?" in url else "?") + "_=" + str(os.urandom(8).hex()),
+        headers={"User-Agent": "PisoNetSetup", "Cache-Control": "no-cache", "Pragma": "no-cache"},
     )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read()
 
+
+def version_tuple(value):
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            return response.read().decode("utf-8")
-
-    except urllib.error.HTTPError as e:
-        raise GitHubFetchError(
-            f"GitHub returned HTTP {e.code} while fetching {path}"
-        ) from e
-
-    except urllib.error.URLError as e:
-        raise GitHubFetchError(
-            f"GitHub connection failed while fetching {path}: {e.reason}"
-        ) from e
-
-    except UnicodeDecodeError as e:
-        raise GitHubFetchError(
-            f"Invalid text response while fetching {path}: {e}"
-        ) from e
-
-
-def parse_version(version):
-    try:
-        return tuple(int(x) for x in str(version).split("."))
-    except (ValueError, AttributeError):
+        return tuple(int(x) for x in str(value).split("."))
+    except Exception:
         return (0,)
 
 
-def is_newer_version(remote_version, local_version):
-    return parse_version(remote_version) > parse_version(local_version)
-
-
-def save_file(path, content):
-    folder = os.path.dirname(os.path.abspath(path))
-    os.makedirs(folder, exist_ok=True)
-
-    fd, temp_path = tempfile.mkstemp(
-        prefix=".pygit_",
-        dir=folder,
-        text=True,
+def install_firewall():
+    subprocess.run(
+        ["netsh", "advfirewall", "firewall", "add", "rule",
+         "name=" + FIREWALL_RULE, "dir=in", "action=allow",
+         "protocol=TCP", "localport=5000", "profile=any", "enable=yes"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
     )
 
+
+def install_startup():
+    os.makedirs(STARTUP_DIR, exist_ok=True)
+    shortcut = os.path.join(STARTUP_DIR, "PisoNetClient.lnk")
+    script = (
+        '$ws = New-Object -ComObject WScript.Shell; '
+        '$s = $ws.CreateShortcut([Environment]::GetFolderPath("CommonStartup") + "\\PisoNetClient.lnk"); '
+        f'$s.TargetPath = "{APP_EXE}"; $s.WorkingDirectory = "{APP_DIR}"; '
+        '$s.WindowStyle = 7; $s.Save()'
+    )
+    subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def stop_app():
+    subprocess.run(["taskkill", "/IM", "PisoNetClient.exe", "/F"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def update_app(remote_control):
+    app_name = remote_control.get("app", "PisoNetClient.exe")
+    download_url = remote_control.get("download", GITHUB_BASE + app_name)
+    data = fetch_text(download_url)
+
+    os.makedirs(APP_DIR, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".PisoNetClient.", suffix=".exe", dir=APP_DIR)
+    os.close(fd)
+
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(temp_path, path)
-    except Exception:
+        with open(temp_path, "wb") as f:
+            f.write(data)
+        stop_app()
+        os.replace(temp_path, APP_EXE)
+    finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        raise
 
 
 def load_local_control():
-    if not os.path.exists(RUNTIME_CONTROL):
-        return None
-
     try:
-        with open(RUNTIME_CONTROL, "r", encoding="utf-8") as f:
+        with open(LOCAL_CONTROL, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except Exception:
         return None
 
 
-def load_local_requirements():
-    if not os.path.exists(RUNTIME_REQUIREMENTS):
-        return ""
-
+def save_control(control):
+    fd, temp_path = tempfile.mkstemp(prefix=".control.", suffix=".json", dir=APP_DIR, text=True)
+    os.close(fd)
     try:
-        with open(RUNTIME_REQUIREMENTS, "r", encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return ""
-
-
-def get_python_command():
-    if not getattr(sys, "frozen", False):
-        return [sys.executable]
-
-    python_exe = shutil.which("python")
-    if python_exe:
-        return [python_exe]
-
-    py_launcher = shutil.which("py")
-    if py_launcher:
-        return [py_launcher, "-3"]
-
-    raise RuntimeError(
-        "Python is required to run downloaded code and install dependencies."
-    )
-
-
-def install_dependencies(requirements):
-    requirements = requirements.strip()
-
-    if not requirements:
-        if load_local_requirements().strip():
-            save_file(RUNTIME_REQUIREMENTS, "")
-        return
-
-    if requirements == load_local_requirements().strip():
-        return
-
-    log("[PYGIT] Installing/updating application dependencies...")
-
-    os.makedirs(RUNTIME_DIR, exist_ok=True)
-
-    fd, temp_requirements = tempfile.mkstemp(
-        prefix=".pygit_requirements_",
-        dir=RUNTIME_DIR,
-        text=True,
-    )
-
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(requirements + "\n")
-
-        command = get_python_command() + [
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "-r",
-            temp_requirements,
-        ]
-
-        result = subprocess.run(
-            command,
-            cwd=BASE_DIR,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Dependency installation failed with exit code "
-                f"{result.returncode}."
-            )
-
-        save_file(RUNTIME_REQUIREMENTS, requirements + "\n")
-        log("[PYGIT] Dependencies ready.")
-
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(control, f, indent=2)
+            f.write("\n")
+        os.replace(temp_path, LOCAL_CONTROL)
     finally:
-        if os.path.exists(temp_requirements):
-            os.remove(temp_requirements)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
-def validate_code(code):
-    compile(code, RUNTIME_CODE, "exec")
-
-
-def install_remote(remote_control, remote_code, requirements):
-    install_dependencies(requirements)
-    validate_code(remote_code)
-
-    os.makedirs(RUNTIME_DIR, exist_ok=True)
-
-    if os.path.exists(RUNTIME_CODE):
-        shutil.copy2(RUNTIME_CODE, BACKUP_CODE)
-
-    save_file(RUNTIME_CODE, remote_code)
-    save_file(
-        RUNTIME_CONTROL,
-        json.dumps(remote_control, indent=2) + "\n",
-    )
-
-
-def fetch_control():
-    try:
-        remote_control = json.loads(get_remote("control.json"))
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Invalid control.json from GitHub: {e}") from e
-
-    if "version" not in remote_control or "code" not in remote_control:
-        raise RuntimeError(
-            "Invalid control.json: version and code are required."
-        )
-
-    return remote_control
-
-
-def get_remote_requirements():
-    try:
-        return get_remote("requirements.txt")
-    except GitHubFetchError as e:
-        if "HTTP 404" in str(e):
-            return ""
-        raise
-
-
-def ensure_runtime():
-    os.makedirs(RUNTIME_DIR, exist_ok=True)
-
-    local_control = load_local_control()
-
-    # Always check GitHub at startup. A locally installed runtime must
-    # never prevent the client from seeing a newer published version.
-    try:
-        remote_control = fetch_control()
-
-        if local_control and os.path.exists(RUNTIME_CODE):
-            local_version = local_control.get("version", "0.0.0")
-            remote_version = remote_control["version"]
-
-            if not is_newer_version(remote_version, local_version):
-                # The control file can say the correct version while the
-                # actual code file is stale. Verify the code before trusting
-                # the local runtime.
-                remote_code = get_remote(remote_control["code"])
-
-                try:
-                    with open(RUNTIME_CODE, "r", encoding="utf-8") as f:
-                        local_code = f.read()
-                except OSError as e:
-                    raise RuntimeError(
-                        f"Unable to read local runtime code: {e}"
-                    ) from e
-
-                if local_code == remote_code:
-                    return local_control
-
-                log(
-                    f"[PYGIT] Runtime code mismatch for version "
-                    f"{remote_version}. Repairing local code..."
-                )
-                remote_requirements = get_remote_requirements()
-                install_remote(
-                    remote_control,
-                    remote_code,
-                    remote_requirements,
-                )
-                log(f"[PYGIT] Repaired version {remote_version}.")
-                return remote_control
-
-        if local_control:
-            log(
-                f"[PYGIT] Startup update detected: "
-                f"{local_control.get('version', 'unknown')} -> "
-                f"{remote_control['version']}"
-            )
-        else:
-            log(
-                f"[PYGIT] No local runtime found. Installing "
-                f"version {remote_control['version']}..."
-            )
-
-        remote_code = get_remote(remote_control["code"])
-        remote_requirements = get_remote_requirements()
-
-        install_remote(
-            remote_control,
-            remote_code,
-            remote_requirements,
-        )
-
-        log(f"[PYGIT] Installed version {remote_control['version']}.")
-        return remote_control
-
-    except GitHubFetchError as e:
-        # If GitHub is unavailable, continue with an existing local runtime.
-        if local_control and os.path.exists(RUNTIME_CODE):
-            log(f"[PYGIT] Initial GitHub check failed; using local runtime: {e}")
-            return local_control
-        raise
-
-
-def start_code(control):
-    log(f"[PYGIT] Running version {control['version']}")
-    log("[PYGIT] Starting code.py...")
-
-    return subprocess.Popen(
-        get_python_command() + [RUNTIME_CODE],
-        cwd=BASE_DIR,
-    )
-
-
-def stop_code(process):
-    if process and process.poll() is None:
-        log("[PYGIT] Stopping application...")
-        process.terminate()
-
-        try:
-            process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            log("[PYGIT] Application did not stop gracefully. Killing it...")
-            process.kill()
-            process.wait()
-
-
-def check_for_update(current_control):
-    remote_control = fetch_control()
-
-    remote_version = remote_control["version"]
-    local_version = current_control.get("version", "0.0.0")
-
-    if not is_newer_version(remote_version, local_version):
-        return current_control, False
-
-    log(f"[PYGIT] New version detected: {remote_version}")
-    log("[PYGIT] Downloading new code...")
-
-    remote_code = get_remote(remote_control["code"])
-    remote_requirements = get_remote_requirements()
-
-    install_remote(
-        remote_control,
-        remote_code,
-        remote_requirements,
-    )
-
-    log("[PYGIT] New code installed.")
-    return remote_control, True
+def launch():
+    subprocess.Popen([APP_EXE], cwd=APP_DIR, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
 def main():
-    process = None
+    require_admin()
+    os.makedirs(APP_DIR, exist_ok=True)
 
     try:
-        control = ensure_runtime()
-        process = start_code(control)
+        remote = json.loads(fetch_text(CONTROL_URL).decode("utf-8"))
+        if "version" not in remote:
+            raise RuntimeError("control.json is missing version.")
 
-        while True:
-            time.sleep(CHECK_INTERVAL)
+        local = load_local_control()
+        needs_update = not os.path.exists(APP_EXE)
 
-            try:
-                new_control, updated = check_for_update(control)
+        if local and not needs_update:
+            needs_update = version_tuple(remote["version"]) > version_tuple(local.get("version", "0.0.0"))
 
-                if updated:
-                    log("[PYGIT] Restarting application...")
-                    stop_code(process)
+        if needs_update:
+            log("[PisoNetSetup] Installing/updating PisoNetClient " + str(remote["version"]))
+            update_app(remote)
 
-                    control = new_control
-                    process = start_code(control)
-                    continue
+        save_control(remote)
+        install_firewall()
+        install_startup()
+        launch()
+        log("[PisoNetSetup] Installation/update completed.")
 
-            except GitHubFetchError as e:
-                log(f"[PYGIT] GitHub check failed: {e}")
-
-            except Exception as e:
-                log(f"[PYGIT] Update check failed: {e}")
-
-            # Do not restart a naturally exited application here.
-            # The supervisor only restarts code.py when a NEW GitHub
-            # version is detected.
-
-    except KeyboardInterrupt:
-        log("[PYGIT] Keyboard interrupt received. Stopping...")
-        stop_code(process)
-
-    except Exception as e:
-        log(f"[PYGIT] Startup failed: {e}")
-        stop_code(process)
+    except Exception as exc:
+        log("[PisoNetSetup] ERROR: " + str(exc))
+        raise
 
 
 if __name__ == "__main__":
