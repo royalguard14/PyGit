@@ -1,4 +1,4 @@
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
