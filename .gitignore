@@ -1,2 +1,3 @@
 push.bat
 nodemcu/data/wifi_config.json
+.pygit_runtime/
