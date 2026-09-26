@@ -617,6 +617,24 @@ void handleControlServer() {
         }
       }
     }
+
+    // Accept new requests while another PC is active so discovery
+    // can identify this NodeMCU and receive REJECTED|ACTIVE.
+    WiFiClient newClient = controlServer.available();
+    if (newClient) {
+      newClient.setTimeout(2);
+      newClient.setNoDelay(true);
+
+      String line = newClient.readStringUntil('\n');
+      line.trim();
+
+      if (line.length()) {
+        processRequest(line, newClient);
+      }
+
+      newClient.stop();
+    }
+
     return;
   }
 
@@ -740,7 +758,7 @@ void setup() {
   Serial.println("PC receiver: TCP 5000");
   Serial.println("One-PC lock: ENABLED");
   Serial.println("Time input unit: MINUTES");
-  Serial.println("Waiting for Side A / Side B receiver...");
+  Serial.println("Waiting for PC receiver...");
 
   lastCheck = millis();
 }
