@@ -3,6 +3,7 @@
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <ESP8266WebServer.h>
+#include <DNSServer.h>
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 const char* DEVICE_CONFIG_FILE = "/device_config.json";
@@ -26,6 +27,11 @@ unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
+DNSServer dnsServer;
+const byte DNS_PORT = 53;
+IPAddress apIP(192, 168, 4, 1);
+IPAddress apGateway(192, 168, 4, 1);
+IPAddress apSubnet(255, 255, 255, 0);
 WiFiServer controlServer(CONTROL_PORT);
 
 WiFiClient controlClient;
@@ -138,26 +144,62 @@ bool saveWiFiConfig(const String& ssid, const String& password) {
   return true;
 }
 
+void handleCaptivePortal() {
+  // Any unknown URL is redirected to the PyGit Wi-Fi setup page.
+  server.sendHeader("Location", String("http://") + apIP.toString(), true);
+  server.send(302, "text/plain", "Redirecting to PyGit WiFi Setup...");
+}
+
 void startWiFiSetup() {
+  WiFi.disconnect();
+  delay(100);
+
   WiFi.mode(WIFI_AP);
   String ap = "PyGit-" + WiFi.macAddress();
   ap.replace(":", "");
+
+  WiFi.softAPConfig(apIP, apGateway, apSubnet);
   WiFi.softAP(ap.c_str());
+
+  // Captive portal DNS: every hostname resolves to the NodeMCU AP.
+  dnsServer.start(DNS_PORT, "*", apIP);
 
   Serial.println("\n==============================");
   Serial.println("Wi-Fi Setup Mode");
   Serial.println("==============================");
   Serial.print("Setup SSID: "); Serial.println(ap);
-  Serial.print("Open: http://"); Serial.println(WiFi.softAPIP());
+  Serial.print("Setup IP: http://"); Serial.println(apIP);
+  Serial.println("Captive portal: ENABLED");
+  Serial.println("Connect to the setup SSID; the portal should open automatically.");
 
   server.on("/", HTTP_GET, []() {
     server.send(200, "text/html",
-      "<meta name='viewport' content='width=device-width'>"
+      "<!doctype html><html><head>"
+      "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+      "<title>PyGit WiFi Setup</title></head><body>"
       "<h2>PyGit WiFi Setup</h2>"
       "<form method='POST' action='/save'>"
-      "SSID:<br><input name='ssid' required><br><br>"
-      "Password:<br><input name='password' type='password'><br><br>"
-      "<button>Save & Connect</button></form>");
+      "SSID:<br><input name='ssid' required autocomplete='off'><br><br>"
+      "Password:<br><input name='password' type='password' autocomplete='off'><br><br>"
+      "<button type='submit'>Save & Connect</button>"
+      "</form></body></html>");
+  });
+
+  // Common captive-portal probe URLs used by phones and PCs.
+  server.on("/generate_204", HTTP_GET, []() {
+    server.sendHeader("Location", "http://" + apIP.toString() + "/", true);
+    server.send(302, "text/plain", "PyGit WiFi Setup");
+  });
+  server.on("/hotspot-detect.html", HTTP_GET, []() {
+    server.send(200, "text/html", "<meta http-equiv='refresh' content='0;url=http://" + apIP.toString() + "/'>");
+  });
+  server.on("/connecttest.txt", HTTP_GET, []() {
+    server.sendHeader("Location", "http://" + apIP.toString() + "/", true);
+    server.send(302, "text/plain", "PyGit WiFi Setup");
+  });
+  server.on("/ncsi.txt", HTTP_GET, []() {
+    server.sendHeader("Location", "http://" + apIP.toString() + "/", true);
+    server.send(302, "text/plain", "PyGit WiFi Setup");
   });
 
   server.on("/save", HTTP_POST, []() {
@@ -165,19 +207,27 @@ void startWiFiSetup() {
     String password = server.arg("password");
     ssid.trim();
 
+    if (!ssid.length()) {
+      server.send(400, "text/plain", "SSID is required.");
+      return;
+    }
+
     if (!saveWiFiConfig(ssid, password)) {
       server.send(500, "text/plain", "Could not save WiFi configuration.");
       return;
     }
 
-    server.send(200, "text/html", "<h2>Saved.</h2><p>Restarting...</p>");
+    server.send(200, "text/html",
+      "<h2>Saved.</h2><p>Wi-Fi credentials saved. Restarting NodeMCU...</p>");
     delay(1000);
     ESP.restart();
   });
 
+  server.onNotFound(handleCaptivePortal);
   server.begin();
 
   while (true) {
+    dnsServer.processNextRequest();
     server.handleClient();
     delay(2);
   }
@@ -591,11 +641,19 @@ void setup() {
 
   if (flashPressedAtStartup()) startWiFiSetup();
 
-  if (!loadWiFiConfig()) startWiFiSetup();
+  if (!loadWiFiConfig()) {
+    Serial.println("Wi-Fi configuration NOT FOUND in LittleFS.");
+    Serial.println("Starting automatic Wi-Fi setup portal...");
+    startWiFiSetup();
+  }
 
   Serial.println("Wi-Fi configuration loaded from LittleFS.");
 
-  if (!connectWiFi()) startWiFiSetup();
+  if (!connectWiFi()) {
+    Serial.println("Saved Wi-Fi connection FAILED.");
+    Serial.println("Starting automatic Wi-Fi setup portal...");
+    startWiFiSetup();
+  }
 
   Serial.println("\nPyGit base code online.");
 
