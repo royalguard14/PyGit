@@ -119,15 +119,80 @@ void loadLocalDeviceConfig() {
   applyDeviceConfig(object);
 }
 
+void printLittleFSFiles() {
+  Serial.println();
+  Serial.println("------------------------------");
+  Serial.println("LITTLEFS FILE CHECK");
+  Serial.println("------------------------------");
+
+  const char* files[] = {
+    "/wifi_config.json",
+    "/device_config.json",
+    "/config.json"
+  };
+
+  for (uint8_t i = 0; i < 3; i++) {
+    Serial.print(files[i]);
+    Serial.print(": ");
+    Serial.println(LittleFS.exists(files[i]) ? "FOUND" : "NOT FOUND");
+  }
+
+  Dir dir = LittleFS.openDir("/");
+  bool anyFile = false;
+  while (dir.next()) {
+    anyFile = true;
+    Serial.print("FILE: ");
+    Serial.println(dir.fileName());
+  }
+
+  if (!anyFile) {
+    Serial.println("No files found in LittleFS root.");
+  }
+
+  Serial.println("------------------------------");
+}
+
 bool loadWiFiConfig() {
-  if (!LittleFS.exists(WIFI_CONFIG)) return false;
-  File f = LittleFS.open(WIFI_CONFIG, "r");
-  if (!f) return false;
+  printLittleFSFiles();
+
+  String configPath = WIFI_CONFIG;
+
+  // Normal Arduino ESP8266 LittleFS layout:
+  // sketch data/wifi_config.json -> LittleFS /wifi_config.json
+  // Also accept /data/wifi_config.json for compatibility.
+  if (!LittleFS.exists(configPath)) {
+    if (LittleFS.exists("/data/wifi_config.json")) {
+      configPath = "/data/wifi_config.json";
+      Serial.println("Using Wi-Fi config from /data/wifi_config.json");
+    } else {
+      return false;
+    }
+  }
+
+  File f = LittleFS.open(configPath, "r");
+  if (!f) {
+    Serial.print("Cannot open Wi-Fi config: ");
+    Serial.println(configPath);
+    return false;
+  }
+
   String json = f.readString();
   f.close();
+
   wifiSSID = jsonValue(json, "ssid");
   wifiPassword = jsonValue(json, "password");
-  return wifiSSID.length() > 0;
+
+  Serial.print("Wi-Fi config found: ");
+  Serial.println(configPath);
+  Serial.print("SSID loaded: ");
+  Serial.println(wifiSSID.length() ? wifiSSID : "(EMPTY)");
+
+  if (!wifiSSID.length()) {
+    Serial.println("Wi-Fi config exists but SSID is empty.");
+    return false;
+  }
+
+  return true;
 }
 
 bool saveWiFiConfig(const String& ssid, const String& password) {
