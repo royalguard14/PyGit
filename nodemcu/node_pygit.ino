@@ -8,8 +8,8 @@
 const char* WIFI_CONFIG = "/wifi_config.json";
 const char* DEVICE_CONFIG_FILE = "/device_config.json";
 const char* CONFIG_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
-const char* PYGIT_FIRMWARE_URL = "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.bin";
-const char* PYGIT_MD5_URL = "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.md5";
+const char* PYGIT_FIRMWARE_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/firmware.bin?ref=main";
+const char* PYGIT_MD5_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/firmware.md5?ref=main";
 const char* PYGIT_LOCAL_HASH_FILE = "/pygit_firmware.md5";
 
 const uint8_t FLASH_BUTTON = 0;
@@ -247,6 +247,7 @@ String remoteFirmwareHash() {
   http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
   http.addHeader("Pragma", "no-cache");
   http.addHeader("User-Agent", "PyGit-NodeMCU");
+  http.addHeader("Accept", "application/vnd.github.raw+json");
 
   int code = http.GET();
   Serial.print("Update identity HTTP Code: "); Serial.println(code);
@@ -274,6 +275,7 @@ bool downloadFirmware(const String& expectedHash) {
   http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
   http.addHeader("Pragma", "no-cache");
   http.addHeader("User-Agent", "PyGit-NodeMCU");
+  http.addHeader("Accept", "application/vnd.github.raw+json");
 
   int code = http.GET();
   Serial.print("Firmware HTTP Code: "); Serial.println(code);
