@@ -1,4 +1,4 @@
-VERSION = "1.4.3"
+VERSION = "1.4.4"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
@@ -26,6 +26,7 @@ OPEN_HOUR = 8
 OPEN_MINUTE = 0
 CLOSE_HOUR = 22
 CLOSE_MINUTE = 30
+INSERT_COIN_MINUTES = 1
 
 # ================= SINGLE INSTANCE =================
 _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -37,10 +38,6 @@ except:
 # ================= GLOBALS =================
 remaining_seconds = 0
 lock = threading.Lock()
-overlay = None
-overlay_active = False
-slide_index = 0
-images = []
 root = None
 timer_label = None
 status_label = None
@@ -120,6 +117,7 @@ else:
 PC_NAME = data.get("PcName", PC_NAME)
 
 # ================= LOAD IMAGES =================
+images = []
 if os.path.exists(IMAGE_FOLDER):
     for filename in os.listdir(IMAGE_FOLDER):
         if filename.lower().endswith((".png", ".jpg", ".jpeg")):
@@ -171,7 +169,7 @@ def log_to_google(minutes):
     except Exception:
         pass
 
-# ================= TIMER =================
+# ================= TIMER / INSERT COIN =================
 def add_minutes(minutes):
     global remaining_seconds
     if minutes <= 0:
@@ -185,12 +183,13 @@ def add_minutes(minutes):
         remaining_seconds += minutes * 60
 
     threading.Thread(target=log_to_google, args=(minutes,), daemon=True).start()
-    root.after(0, refresh_ui)
+    if root:
+        root.after(0, refresh_ui)
 
 
 def insert_coin():
     # Manual/test coin button. One test coin currently adds 1 minute.
-    add_minutes(1)
+    add_minutes(INSERT_COIN_MINUTES)
 
 
 def countdown():
@@ -243,7 +242,7 @@ def handle_client(conn, addr):
 
 
 def server():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket = socket.socket()
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((HOST, PORT))
     server_socket.listen(5)
@@ -266,24 +265,24 @@ def build_main_ui():
     root.title("PisoNet Client")
     root.attributes("-fullscreen", True)
     root.attributes("-topmost", True)
-    root.configure(bg="black")
+    root.configure(bg="black", cursor="arrow")
     root.protocol("WM_DELETE_WINDOW", lambda: None)
 
-    frame = tk.Frame(root, bg="black")
+    frame = tk.Frame(root, bg="black", cursor="arrow")
     frame.pack(fill="both", expand=True)
 
     tk.Label(frame, text="PISONET CLIENT", bg="black", fg="white",
-             font=("Arial", 42, "bold")).pack(pady=(70, 10))
+             font=("Arial", 42, "bold"), cursor="arrow").pack(pady=(70, 10))
 
     tk.Label(frame, text=PC_NAME, bg="black", fg="gray",
-             font=("Arial", 22)).pack(pady=(0, 35))
+             font=("Arial", 22), cursor="arrow").pack(pady=(0, 35))
 
     timer_label = tk.Label(frame, text="00:00:00", bg="black", fg="white",
-                           font=("Arial", 90, "bold"))
+                           font=("Arial", 90, "bold"), cursor="arrow")
     timer_label.pack(pady=20)
 
     status_label = tk.Label(frame, text="", bg="black", fg="white",
-                            font=("Arial", 24))
+                            font=("Arial", 24), cursor="arrow")
     status_label.pack(pady=15)
 
     insert_button = tk.Button(
@@ -297,10 +296,13 @@ def build_main_ui():
         fg="black",
         activebackground="lightgray",
         relief="raised",
-        bd=4
+        bd=4,
+        cursor="hand2"
     )
     insert_button.pack(pady=35)
 
+    # Keep the mouse fully usable. Only keyboard shortcuts are blocked.
+    root.config(cursor="arrow")
     root.bind("<Alt-F4>", lambda event: "break")
     root.bind("<Escape>", lambda event: "break")
 
