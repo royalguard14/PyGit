@@ -33,7 +33,7 @@ jobs:
       - name: Compile deployable NodeMCU firmware
         run: |
           mkdir -p build/sketch
-          cp nodemcu/node_github_test.ino build/sketch/nodemcu.ino
+          cp nodemcu/node_github_test.ino build/sketch/sketch.ino
 
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
@@ -42,7 +42,7 @@ jobs:
 
       - name: Publish firmware.bin
         run: |
-          cp build/nodemcu.ino.bin nodemcu/firmware.bin
+          cp build/sketch.ino.bin nodemcu/firmware.bin
 
           git config user.name "PyGit Build Bot"
           git config user.email "actions@github.com"
