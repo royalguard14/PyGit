@@ -492,7 +492,7 @@ void clearActiveClient(const char* reason) {
   if (controlClient) controlClient.stop();
 
   activeClient = false;
-  digitalWrite(TRIGGER_PIN, HIGH);  // Coinslot OFF when no PC is active.
+  digitalWrite(TRIGGER_PIN, LOW);   // Coinslot OFF when no PC is active.
   activePcName = "";
   activePcIP = IPAddress(0, 0, 0, 0);
   activePcPort = DEFAULT_PC_PORT;
@@ -585,7 +585,7 @@ void processRequest(const String& line, WiFiClient& client) {
   }
 
   activeClient = true;
-  digitalWrite(TRIGGER_PIN, LOW);   // Coinslot ON for the accepted PC.
+  digitalWrite(TRIGGER_PIN, LOW);  // Coinslot ON for the accepted PC.
   activePcName = pcName;
   activePcIP = pcIP;
   activePcPort = pcPort;
@@ -681,14 +681,14 @@ void handleCoinPulse() {
   Serial.print(timeInputPerPulse);
   Serial.println(" seconds");
 
-  // GPIO14 controls the coinslot. LOW = ON, HIGH = OFF.
-  if (digitalRead(TRIGGER_PIN) != LOW) {
-    Serial.println("Coinslot OFF (GPIO14 HIGH). Coin ignored.");
+  // GPIO14 controls the coinslot. HIGH = ON, LOW = OFF.
+  if (digitalRead(TRIGGER_PIN) != HIGH) {
+    Serial.println("Coinslot OFF (GPIO14 LOW). Coin ignored.");
     Serial.println("------------------------------");
     return;
   }
 
-  Serial.println("Coinslot ON (GPIO14 LOW).");
+  Serial.println("Coinslot ON (GPIO14 HIGH).");
 
   if (!activeClient) {
     Serial.println("No active PC. Coin ignored.");
@@ -730,7 +730,7 @@ void setup() {
   pinMode(COIN_PIN, INPUT_PULLUP);
 
   // GPIO14 controls the coinslot.
-  // Keep it OFF during startup. LOW will turn the coinslot ON.
+  // Keep it OFF during startup. HIGH will turn the coinslot ON.
   pinMode(TRIGGER_PIN, OUTPUT);
   digitalWrite(TRIGGER_PIN, HIGH);
 
@@ -760,8 +760,8 @@ void setup() {
   Serial.println("Coinslot input: D6 / GPIO12");
   Serial.println("Expected coin pulse: LOW for about 50 ms");
   Serial.println("Coinslot control: D5 / GPIO14");
-  Serial.println("Coinslot ON: GPIO14 LOW");
-  Serial.println("Coinslot OFF: GPIO14 HIGH");
+  Serial.println("Coinslot ON: GPIO14 HIGH");
+  Serial.println("Coinslot OFF: GPIO14 LOW");
   Serial.println("Control server: TCP 5001");
   Serial.println("PC receiver: TCP 5000");
   Serial.println("One-PC lock: ENABLED");
