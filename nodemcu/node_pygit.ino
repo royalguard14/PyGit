@@ -9,12 +9,23 @@ const char* DEVICE_CONFIG_FILE = "/device_config.json";
 const char* CONFIG_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
 const uint8_t FLASH_BUTTON = 0;
+const uint8_t COIN_PIN = 12;              // D6 / GPIO12
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
+const unsigned long COIN_DEBOUNCE_MS = 100;
+
+const uint16_t COIN_SERVER_PORT = 5001;
+const unsigned long DEFAULT_TIME_PER_PULSE = 500;
+
 unsigned long lastCheck = 0;
+volatile unsigned long lastCoinInterrupt = 0;
+volatile bool coinPulseDetected = false;
+unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
+WiFiServer coinServer(COIN_SERVER_PORT);
+WiFiClient coinClient;
 
 String jsonValue(const String& json, const String& key) {
   String token = "\"" + key + "\"";
@@ -62,6 +73,14 @@ void saveDeviceConfig(const String& object) {
   f.close();
 }
 
+void applyDeviceConfig(const String& object) {
+  String value = jsonValue(object, "time_input_per_pulse");
+  if (value.length()) {
+    unsigned long parsed = value.toInt();
+    if (parsed > 0) timeInputPerPulse = parsed;
+  }
+}
+
 void showDeviceConfig(const String& object) {
   Serial.println();
   Serial.println("------------------------------");
@@ -72,6 +91,17 @@ void showDeviceConfig(const String& object) {
   Serial.print("Google Sheet: "); Serial.println(jsonValue(object, "google_sheet"));
   Serial.print("Time input/pulse: "); Serial.println(jsonValue(object, "time_input_per_pulse"));
   Serial.println("------------------------------");
+}
+
+void loadLocalDeviceConfig() {
+  if (!LittleFS.exists(DEVICE_CONFIG_FILE)) return;
+
+  File f = LittleFS.open(DEVICE_CONFIG_FILE, "r");
+  if (!f) return;
+
+  String object = f.readString();
+  f.close();
+  applyDeviceConfig(object);
 }
 
 bool loadWiFiConfig() {
@@ -216,10 +246,16 @@ void checkDeviceConfig(const String& remote) {
   if (localVersion != remoteVersion) {
     Serial.println("New device configuration detected.");
     saveDeviceConfig(remoteObject);
+    applyDeviceConfig(remoteObject);
     showDeviceConfig(remoteObject);
   } else {
+    applyDeviceConfig(remoteObject);
     Serial.println("Device configuration is up to date.");
   }
+
+  Serial.print("Active time per pulse: ");
+  Serial.print(timeInputPerPulse);
+  Serial.println(" seconds");
 
   Serial.println("==============================");
 }
@@ -268,6 +304,72 @@ void checkGitHubConfig() {
   checkDeviceConfig(remote);
 }
 
+void ICACHE_RAM_ATTR coinInterrupt() {
+  unsigned long now = millis();
+
+  if (now - lastCoinInterrupt >= COIN_DEBOUNCE_MS) {
+    lastCoinInterrupt = now;
+    coinPulseDetected = true;
+  }
+}
+
+void startCoinServer() {
+  coinServer.begin();
+  coinServer.setNoDelay(true);
+
+  Serial.print("Coin server: TCP port ");
+  Serial.println(COIN_SERVER_PORT);
+}
+
+void handleCoinClient() {
+  if (!coinClient || !coinClient.connected()) {
+    if (coinClient) coinClient.stop();
+
+    WiFiClient newClient = coinServer.available();
+
+    if (newClient) {
+      coinClient = newClient;
+      Serial.println("Coin receiver client connected.");
+      coinClient.println("PYGIT READY");
+    }
+  }
+
+  if (coinClient && coinClient.connected() && coinClient.available()) {
+    while (coinClient.available()) coinClient.read();
+  }
+}
+
+void handleCoinPulse() {
+  bool pulse = false;
+
+  noInterrupts();
+  if (coinPulseDetected) {
+    coinPulseDetected = false;
+    pulse = true;
+  }
+  interrupts();
+
+  if (!pulse) return;
+
+  Serial.println();
+  Serial.println("------------------------------");
+  Serial.println("COIN PULSE DETECTED");
+  Serial.println("Pulse width assumption: 50 ms");
+  Serial.print("Time input per pulse: ");
+  Serial.print(timeInputPerPulse);
+  Serial.println(" seconds");
+
+  if (coinClient && coinClient.connected()) {
+    coinClient.print("COIN:");
+    coinClient.println(timeInputPerPulse);
+    Serial.println("Coin value sent to receiver.");
+  } else {
+    Serial.println("No receiver connected. Coin ignored.");
+  }
+
+  Serial.println("------------------------------");
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -282,6 +384,10 @@ void setup() {
   }
 
   Serial.println("LittleFS mounted.");
+  loadLocalDeviceConfig();
+
+  pinMode(COIN_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(COIN_PIN), coinInterrupt, FALLING);
 
   if (flashPressedAtStartup()) startWiFiSetup();
 
@@ -294,6 +400,11 @@ void setup() {
   Serial.println("\nPyGit base code online.");
 
   checkGitHubConfig();
+  startCoinServer();
+
+  Serial.println("Coinslot input: D6 / GPIO12");
+  Serial.println("Expected pulse: LOW for about 50 ms");
+  Serial.println("Waiting for Side A receiver...");
 
   lastCheck = millis();
 }
@@ -304,8 +415,13 @@ void loop() {
     return;
   }
 
+  handleCoinClient();
+  handleCoinPulse();
+
   if (millis() - lastCheck >= CHECK_INTERVAL) {
     lastCheck = millis();
     checkGitHubConfig();
   }
+
+  delay(2);
 }
