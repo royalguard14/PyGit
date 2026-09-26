@@ -2,24 +2,79 @@ import socket
 import threading
 import tkinter as tk
 from tkinter import ttk
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 PC_NAME = "PC2"
 PC_PORT = 5000
-NODEMCU_IP = "192.168.1.23"
 NODEMCU_PORT = 5001
 TIME_PER_PULSE = 10  # minutes
+DISCOVERY_TIMEOUT = 0.35
+DISCOVERY_WORKERS = 32
 
 
 def get_local_ip():
-    """Get the PC's LAN IP address without opening a listening connection."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    """Get this PC's LAN IP without requiring a connection to the NodeMCU."""
+    for target in ("8.8.8.8", "1.1.1.1"):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect((target, 80))
+            ip = sock.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+        except OSError:
+            pass
+        finally:
+            sock.close()
+
     try:
-        sock.connect((NODEMCU_IP, NODEMCU_PORT))
-        return sock.getsockname()[0]
+        ip = socket.gethostbyname(socket.gethostname())
+        if ip and not ip.startswith("127."):
+            return ip
     except OSError:
-        return "127.0.0.1"
-    finally:
-        sock.close()
+        pass
+
+    return "127.0.0.1"
+
+
+def discover_nodemcu(local_ip):
+    """Find a PyGit NodeMCU by scanning this PC's local /24 subnet."""
+    parts = local_ip.split(".")
+    if len(parts) != 4 or any(not p.isdigit() for p in parts):
+        return None, "INVALID LOCAL IP"
+
+    prefix = ".".join(parts[:3])
+    candidates = [f"{prefix}.{i}" for i in range(1, 255) if i != int(parts[3])]
+
+    def probe(ip):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(DISCOVERY_TIMEOUT)
+        try:
+            sock.connect((ip, NODEMCU_PORT))
+            sock.settimeout(1.5)
+            request = f"REQUEST|{PC_NAME}|{local_ip}|{PC_PORT}\n"
+            sock.sendall(request.encode("utf-8"))
+            response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+
+            if response.startswith("ACCEPTED|") or response.startswith("REJECTED|ACTIVE|"):
+                return ip, sock, response
+
+            sock.close()
+        except OSError:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        return None
+
+    with ThreadPoolExecutor(max_workers=DISCOVERY_WORKERS) as executor:
+        futures = [executor.submit(probe, ip) for ip in candidates]
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                ip, sock, response = result
+                return ip, (sock, response)
+
+    return None, None
 
 
 class CoinReceiver:
@@ -34,6 +89,7 @@ class CoinReceiver:
         self.coins = 0
         self.total_time = 0
         self.local_ip = get_local_ip()
+        self.nodemcu_ip = None
 
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -74,25 +130,24 @@ class CoinReceiver:
         self.root.after(0, lambda: self.status.config(text=message))
 
     def connect_to_nodemcu(self):
-        try:
-            sock = socket.create_connection((NODEMCU_IP, NODEMCU_PORT), timeout=5)
-            sock.settimeout(5)
-            request = f"REQUEST|{PC_NAME}|{self.local_ip}|{PC_PORT}\n"
-            sock.sendall(request.encode("utf-8"))
-            response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+        node_ip, discovery = discover_nodemcu(self.local_ip)
 
-            if response.startswith("ACCEPT"):
-                with self.node_lock:
-                    if self.node_socket:
-                        try: self.node_socket.close()
-                        except OSError: pass
-                    self.node_socket = sock
-                return True, response
+        if not node_ip or not discovery:
+            return False, "ERROR|NODEMCU NOT FOUND"
 
-            sock.close()
-            return False, response or "REJECT|UNKNOWN"
-        except OSError as exc:
-            return False, f"ERROR|{exc}"
+        sock, response = discovery
+        self.nodemcu_ip = node_ip
+
+        if response.startswith("ACCEPTED|"):
+            with self.node_lock:
+                if self.node_socket:
+                    try: self.node_socket.close()
+                    except OSError: pass
+                self.node_socket = sock
+            return True, response
+
+        sock.close()
+        return False, response or "REJECT|UNKNOWN"
 
     def release_from_nodemcu(self):
         with self.node_lock:
@@ -120,7 +175,7 @@ class CoinReceiver:
 
         self.requesting = True
         self.receive_button.config(state="disabled")
-        self.set_status("Status: REQUESTING NODEMCU...")
+        self.set_status("Status: SEARCHING FOR NODEMCU...")
         threading.Thread(target=self.request_receiving, daemon=True).start()
 
     def request_receiving(self):
@@ -129,7 +184,7 @@ class CoinReceiver:
             self.receiving = True
             self.requesting = False
             self.root.after(0, lambda: self.receive_button.config(text="STOP RECEIVING", state="normal"))
-            self.set_status("Status: RECEIVING COINS")
+            self.set_status(f"Status: RECEIVING COINS ({self.nodemcu_ip})")
             return
 
         self.receiving = False
@@ -141,7 +196,7 @@ class CoinReceiver:
         elif response.startswith("REJECT") or response.startswith("REJECTED|"):
             self.set_status("Status: ANOTHER PC IS RECEIVING")
         else:
-            self.set_status("Status: NODEMCU CONNECTION FAILED")
+            self.set_status("Status: NODEMCU NOT FOUND")
 
         self.root.after(0, lambda: self.receive_button.config(text="RECEIVE COINS", state="normal"))
         self.root.after(2500, self.restore_idle_status)
