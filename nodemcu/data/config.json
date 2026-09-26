@@ -1,11 +1,11 @@
 {
   "devices": {
     "D8:BC:38:B2:00:D8": {
-      "version": "1.0.1",
+      "version": "1.0.2",
       "shop_name": "Imran Shop",
       "google_sheet": "",
       "system_password": "",
-      "time_input_per_pulse": "500"
+      "time_input_per_pulse": "10"
     }
   }
 }
