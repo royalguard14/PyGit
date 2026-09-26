@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'nodemcu/node_pygit.ino'
+      - '.github/workflows/build-nodemcu.yml'
   workflow_dispatch:
 
 permissions:
