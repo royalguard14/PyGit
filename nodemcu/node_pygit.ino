@@ -27,6 +27,8 @@ const char* FIRMWARE_URL =
 const char* configURL =
   "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
+// OTA build trigger: rebuild after workflow compiler fix.
+
 String wifiSSID = "";
 String wifiPassword = "";
 
@@ -35,7 +37,7 @@ ESP8266WebServer server(80);
 // Simple JSON value reader.
 // This avoids requiring the ArduinoJson library.
 String readJsonValue(const String& json, const String& key) {
-  String searchKey = "\"" + key + "\"";
+  String searchKey = """ + key + """;
   int keyPos = json.indexOf(searchKey);
 
   if (keyPos < 0) return "";
@@ -67,6 +69,7 @@ bool saveWiFiConfig(const String& ssid, const String& password) {
   f.print("  \"password\": \"");
   f.print(password);
   f.println("\"");
+
   f.println("}");
 
   f.close();
@@ -245,12 +248,12 @@ bool connectToWiFi() {
 
 // Finds the version belonging to this ESP MAC.
 String readDeviceVersion(const String& json, const String& mac) {
-  String deviceKey = "\"" + mac + "\"";
+  String deviceKey = """ + mac + """;
   int devicePos = json.indexOf(deviceKey);
 
   if (devicePos < 0) return "";
 
-  int versionPos = json.indexOf("\"version\"", devicePos);
+  int versionPos = json.indexOf(""version"", devicePos);
 
   if (versionPos < 0) return "";
 
@@ -258,10 +261,10 @@ String readDeviceVersion(const String& json, const String& mac) {
 }
 
 String readGeneralFirmwareVersion(const String& json) {
-  int generalPos = json.indexOf("\"general_version\"");
+  int generalPos = json.indexOf(""general_version"");
   if (generalPos < 0) return "";
 
-  int inoPos = json.indexOf("\"ino\"", generalPos);
+  int inoPos = json.indexOf(""ino"", generalPos);
   if (inoPos < 0) return "";
 
   return readJsonValue(json.substring(inoPos), "ino");
