@@ -1,4 +1,4 @@
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
@@ -11,8 +11,6 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime, timedelta
 import pytz
 import ntplib
-import traceback
-
 
 
 # ================= CONFIG =================
@@ -28,34 +26,12 @@ IP_BASE = 100
 MAX_PC = 10
 
 GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxrlmAv0Sr7KWMIgLVi4RoA8CnLv7WxHUfgzfoF0IYVmzacJaIe7OBPrxn0zCXtYCp/exec"
-ADMIN_KEY = "7148"
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 OPEN_HOUR = 8
 OPEN_MINUTE = 0
 CLOSE_HOUR = 22
 CLOSE_MINUTE = 30
-
-# ================= CRASH RECOVERY =================
-RECOVERY_FILE = "E:/recovery.json"
-os.makedirs(os.path.dirname(RECOVERY_FILE), exist_ok=True)
-
-def save_state():
-    try:
-        with open(RECOVERY_FILE, "w") as f:
-            json.dump({"remaining": remaining_seconds}, f)
-    except:
-        pass
-
-def load_state():
-    global remaining_seconds
-    if os.path.exists(RECOVERY_FILE):
-        try:
-            with open(RECOVERY_FILE) as f:
-                data = json.load(f)
-                remaining_seconds = data.get("remaining", 0)
-        except:
-            remaining_seconds = 0
 
 # ================= SINGLE INSTANCE =================
 _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -249,7 +225,6 @@ def countdown():
         with lock:
             if remaining_seconds > 0:
                 remaining_seconds -= 1
-                save_state()
 
 # ================= SERVER =================
 def handle_client(conn, addr):
@@ -258,13 +233,11 @@ def handle_client(conn, addr):
     try:
         data = conn.recv(1024).decode().strip()
 
-        m = re.match(rf"{PC_NAME}:(\+|\-)(\d+)(:admin:(.+))?", data, re.I)
+        m = re.match(rf"{PC_NAME}:(\+|\-)(\d+)", data, re.I)
 
         if m:
-            sign, minutes, _, key = m.groups()
+            sign, minutes = m.groups()
             minutes = int(minutes)
-
-            is_admin_cmd = key == ADMIN_KEY
 
             status, _ = get_shop_status()
 
@@ -272,7 +245,7 @@ def handle_client(conn, addr):
                 conn.sendall(b"BLOCKED")
                 return
 
-            if status != "OPEN" and not is_admin_cmd:
+            if status != "OPEN":
                 conn.sendall(b"SHOP CLOSED")
                 return
 
@@ -282,27 +255,15 @@ def handle_client(conn, addr):
                 else:
                     remaining_seconds = max(0, remaining_seconds - minutes * 60)
 
-                save_state()
-
             threading.Thread(target=log_to_google, args=(minutes,), daemon=True).start()
 
             conn.sendall(b"OK")
             return
 
-        if data.lower() == f"{PC_NAME.lower()}:shutdown":
-            conn.sendall(b"SHUTDOWN")
-            os.system("shutdown /s /t 1")
-            return
-
-        if data.lower() == f"{PC_NAME.lower()}:restart":
-            conn.sendall(b"RESTART")
-            os.system("shutdown /r /t 1")
-            return
-
         conn.sendall(b"ERROR")
 
     except Exception:
-        traceback.print_exc()
+        pass
     finally:
         conn.close()
 
@@ -316,13 +277,9 @@ def server():
         c, a = s.accept()
         threading.Thread(target=handle_client, args=(c, a), daemon=True).start()
 
-# ================= RECOVERY LOAD =================
-load_state()
-
 # ================= START =================
 threading.Thread(target=server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
-
 
 root = tk.Tk()
 root.withdraw()
