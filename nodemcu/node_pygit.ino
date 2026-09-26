@@ -697,11 +697,6 @@ void handleCoinPulse() {
 
   Serial.println("Coinslot ON (GPIO14 HIGH). Timer reset to 10 seconds.");
 
-    Serial.println("No active PC. Coin ignored.");
-    Serial.println("------------------------------");
-    return;
-  }
-
   if (!receiverClient || !receiverClient.connected()) {
     Serial.println("Active PC receiver disconnected. Releasing client.");
     clearActiveClient("PC receiver connection lost");
