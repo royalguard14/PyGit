@@ -1,8 +1,8 @@
-VERSION = "1.4.4"
+VERSION = "1.4.5"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageOps
 import keyboard
 import ctypes
 from ctypes import POINTER, cast
@@ -39,8 +39,11 @@ except:
 remaining_seconds = 0
 lock = threading.Lock()
 root = None
-timer_label = None
-status_label = None
+canvas = None
+timer_text = None
+status_text = None
+background_photo = None
+current_image_index = 0
 
 # ================= TIME =================
 def get_ntp_time():
@@ -119,7 +122,7 @@ PC_NAME = data.get("PcName", PC_NAME)
 # ================= LOAD IMAGES =================
 images = []
 if os.path.exists(IMAGE_FOLDER):
-    for filename in os.listdir(IMAGE_FOLDER):
+    for filename in sorted(os.listdir(IMAGE_FOLDER)):
         if filename.lower().endswith((".png", ".jpg", ".jpeg")):
             images.append(os.path.join(IMAGE_FOLDER, filename))
 
@@ -258,8 +261,47 @@ def format_time(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def update_background():
+    global background_photo, current_image_index
+
+    if not root or not canvas:
+        return
+
+    width = max(1, root.winfo_width())
+    height = max(1, root.winfo_height())
+
+    if images:
+        try:
+            path = images[current_image_index % len(images)]
+            image = Image.open(path).convert("RGB")
+            image = ImageOps.fit(image, (width, height), method=Image.Resampling.LANCZOS)
+            background_photo = ImageTk.PhotoImage(image)
+            canvas.itemconfig("background", image=background_photo)
+        except Exception:
+            canvas.delete("background")
+            canvas.create_rectangle(0, 0, width, height, fill="black", outline="", tags="background")
+    else:
+        canvas.delete("background")
+        canvas.create_rectangle(0, 0, width, height, fill="black", outline="", tags="background")
+
+    canvas.tag_lower("background")
+
+
+def next_background():
+    global current_image_index
+
+    if not root or not canvas:
+        return
+
+    if images:
+        current_image_index = (current_image_index + 1) % len(images)
+        update_background()
+
+    root.after(SLIDE_INTERVAL * 1000, next_background)
+
+
 def build_main_ui():
-    global root, timer_label, status_label
+    global root, canvas, timer_text, status_text
 
     root = tk.Tk()
     root.title("PisoNet Client")
@@ -268,25 +310,59 @@ def build_main_ui():
     root.configure(bg="black", cursor="arrow")
     root.protocol("WM_DELETE_WINDOW", lambda: None)
 
-    frame = tk.Frame(root, bg="black", cursor="arrow")
-    frame.pack(fill="both", expand=True)
+    canvas = tk.Canvas(root, bg="black", highlightthickness=0, cursor="arrow")
+    canvas.pack(fill="both", expand=True)
 
-    tk.Label(frame, text="PISONET CLIENT", bg="black", fg="white",
-             font=("Arial", 42, "bold"), cursor="arrow").pack(pady=(70, 10))
+    canvas.create_rectangle(
+        0, 0, root.winfo_screenwidth(), root.winfo_screenheight(),
+        fill="black", outline="", tags="background"
+    )
 
-    tk.Label(frame, text=PC_NAME, bg="black", fg="gray",
-             font=("Arial", 22), cursor="arrow").pack(pady=(0, 35))
+    # Background image is loaded from C:/sufyan and shown full-screen.
+    update_background()
 
-    timer_label = tk.Label(frame, text="00:00:00", bg="black", fg="white",
-                           font=("Arial", 90, "bold"), cursor="arrow")
-    timer_label.pack(pady=20)
+    canvas.create_text(
+        root.winfo_screenwidth() // 2, 75,
+        text="PISONET CLIENT",
+        fill="white",
+        font=("Arial", 42, "bold"),
+        tags="ui"
+    )
 
-    status_label = tk.Label(frame, text="", bg="black", fg="white",
-                            font=("Arial", 24), cursor="arrow")
-    status_label.pack(pady=15)
+    canvas.create_text(
+        root.winfo_screenwidth() // 2, 125,
+        text=PC_NAME,
+        fill="white",
+        font=("Arial", 22),
+        tags="ui"
+    )
+
+    canvas.create_text(
+        root.winfo_screenwidth() // 2, 175,
+        text="SHOP OPERATION: 8:00 AM - 10:30 PM",
+        fill="white",
+        font=("Arial", 20, "bold"),
+        tags="ui"
+    )
+
+    timer_text = canvas.create_text(
+        root.winfo_screenwidth() // 2, root.winfo_screenheight() // 2 - 40,
+        text="00:00:00",
+        fill="white",
+        font=("Arial", 90, "bold"),
+        tags="ui"
+    )
+
+    status_text = canvas.create_text(
+        root.winfo_screenwidth() // 2, root.winfo_screenheight() // 2 + 70,
+        text="",
+        fill="white",
+        font=("Arial", 24),
+        tags="ui"
+    )
 
     insert_button = tk.Button(
-        frame,
+        root,
         text="INSERT COIN",
         command=insert_coin,
         font=("Arial", 30, "bold"),
@@ -299,33 +375,43 @@ def build_main_ui():
         bd=4,
         cursor="hand2"
     )
-    insert_button.pack(pady=35)
 
-    # Keep the mouse fully usable. Only keyboard shortcuts are blocked.
+    canvas.create_window(
+        root.winfo_screenwidth() // 2,
+        root.winfo_screenheight() // 2 + 180,
+        window=insert_button,
+        tags="ui"
+    )
+
     root.config(cursor="arrow")
     root.bind("<Alt-F4>", lambda event: "break")
     root.bind("<Escape>", lambda event: "break")
 
+    root.bind("<Configure>", lambda event: update_background())
+
 
 def refresh_ui():
-    if not root:
+    if not root or not canvas:
         return
 
     status, _ = get_shop_status()
     with lock:
         seconds = remaining_seconds
 
-    if timer_label:
-        timer_label.config(text=format_time(seconds))
+    if timer_text:
+        canvas.itemconfig(timer_text, text=format_time(seconds))
 
     if status == "TAMPERED":
-        status_label.config(text="TIME VERIFICATION ERROR")
+        message = "TIME VERIFICATION ERROR"
     elif status != "OPEN":
-        status_label.config(text="SHOP CLOSED")
+        message = "SHOP CLOSED"
     elif seconds <= 0:
-        status_label.config(text="INSERT COIN TO START")
+        message = "INSERT COIN TO START"
     else:
-        status_label.config(text="TIME REMAINING")
+        message = "TIME REMAINING"
+
+    if status_text:
+        canvas.itemconfig(status_text, text=message)
 
     root.after(1000, refresh_ui)
 
@@ -335,4 +421,6 @@ threading.Thread(target=countdown, daemon=True).start()
 
 build_main_ui()
 refresh_ui()
+if root:
+    root.after(SLIDE_INTERVAL * 1000, next_background)
 root.mainloop()
