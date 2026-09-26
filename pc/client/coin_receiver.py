@@ -252,6 +252,10 @@ class CoinReceiver:
                     if not line:
                         continue
 
+                    if line == "PYGIT READY":
+                        self.set_status("Status: NODEMCU CONNECTED")
+                        continue
+
                     if line.startswith("COIN:"):
                         try:
                             seconds = int(line.split(":", 1)[1])
@@ -261,6 +265,10 @@ class CoinReceiver:
                         # A coin is only counted while this PC is active.
                         if self.receiving:
                             self.receive_coin(seconds)
+                            try:
+                                client.sendall(b"COIN_RECEIVED\\n")
+                            except OSError:
+                                pass
 
         except OSError:
             pass
