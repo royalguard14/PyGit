@@ -43,7 +43,7 @@ IPAddress activePcIP;
 uint16_t activePcPort = DEFAULT_PC_PORT;
 
 String jsonValue(const String& json, const String& key) {
-  String token = """ + key + """;
+  String token = "\"" + key + "\"";
   int p = json.indexOf(token);
   if (p < 0) return "";
 
@@ -88,7 +88,7 @@ String jsonValue(const String& json, const String& key) {
 }
 
 String deviceObject(const String& json, const String& mac) {
-  int p = json.indexOf(""" + mac + """);
+  int p = json.indexOf("\"" + mac + "\"");
   if (p < 0) return "";
   int start = json.indexOf('{', p);
   if (start < 0) return "";
