@@ -18,7 +18,7 @@ unsigned long lastUpdateCheck = 0;
 
 // Version of the firmware currently flashed on this base device.
 // Change this when creating a new firmware release.
-const char* LOCAL_FIRMWARE_VERSION = "1.0.0";
+const char* LOCAL_FIRMWARE_VERSION = "1.0.1";
 
 const char* FIRMWARE_URL =
   "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.bin";
@@ -437,7 +437,7 @@ void setup() {
   // Phase 1 test:
   // connect WiFi -> identify device -> read remote config -> print version.
   Serial.println();
-  Serial.println("Hello World!");
+  Serial.println("Hello from PyGit 1.0.1!");
   Serial.print("PyGit Firmware ");
   Serial.println(LOCAL_FIRMWARE_VERSION);
 
