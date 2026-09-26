@@ -6,6 +6,12 @@
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 
+// Built-in FLASH button on most NodeMCU ESP8266 boards.
+const int SETUP_BUTTON_PIN = 0; // GPIO0 / D3
+
+// Hold FLASH while pressing RESET to enter Wi-Fi setup mode.
+const unsigned long SETUP_HOLD_TIME = 1200;
+
 const char* configURL =
   "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
@@ -58,6 +64,36 @@ bool saveWiFiConfig(const String& ssid, const String& password) {
 
   Serial.println("Wi-Fi configuration saved to LittleFS.");
   return true;
+}
+
+bool setupButtonHeld() {
+  pinMode(SETUP_BUTTON_PIN, INPUT_PULLUP);
+
+  // Give the board a short moment after reset, then check whether
+  // the built-in FLASH button is still being held.
+  delay(100);
+
+  if (digitalRead(SETUP_BUTTON_PIN) != LOW) {
+    return false;
+  }
+
+  Serial.println();
+  Serial.println("FLASH button detected.");
+  Serial.println("Hold FLASH for Wi-Fi setup mode...");
+
+  unsigned long start = millis();
+
+  while (digitalRead(SETUP_BUTTON_PIN) == LOW) {
+    if (millis() - start >= SETUP_HOLD_TIME) {
+      Serial.println("Wi-Fi setup requested.");
+      return true;
+    }
+
+    delay(10);
+  }
+
+  Serial.println("FLASH button released before setup mode.");
+  return false;
 }
 
 bool loadWiFiConfig() {
@@ -305,6 +341,14 @@ void setup() {
   }
 
   Serial.println("LittleFS mounted.");
+
+  // Built-in FLASH + RESET:
+  // Hold FLASH while pressing RESET, then keep holding it briefly.
+  // This forces Wi-Fi setup mode even when a valid Wi-Fi config exists.
+  if (setupButtonHeld()) {
+    setupWiFiPortal();
+    return;
+  }
 
   // If credentials are missing/invalid, start the browser setup portal.
   if (!loadWiFiConfig()) {
