@@ -19,12 +19,12 @@ const unsigned long COIN_IDLE_TIMEOUT_MS = 10000;
 
 const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
-const unsigned long DEFAULT_TIME_PER_PULSE = 500;
+const unsigned long DEFAULT_TIME_PER_PULSE = 10;  // minutes
 
 unsigned long lastCheck = 0;
 volatile unsigned long lastCoinInterrupt = 0;
 volatile bool coinPulseDetected = false;
-unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
+unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE; // minutes
 unsigned long lastCoinActivity = 0;
 
 String wifiSSID, wifiPassword;
@@ -52,14 +52,11 @@ String jsonValue(const String& json, const String& key) {
   p = json.indexOf(':', p + token.length());
   if (p < 0) return "";
 
-  // Skip whitespace and find the opening quote.
   int a = p + 1;
   while (a < (int)json.length() && isspace((unsigned char)json[a])) a++;
   if (a >= (int)json.length() || json[a] != '"') return "";
 
   a++;
-
-  // Read the JSON string while honoring escaped characters.
   String value = "";
   bool escaped = false;
 
@@ -82,7 +79,6 @@ String jsonValue(const String& json, const String& key) {
     }
 
     if (c == '"') return value;
-
     value += c;
   }
 
@@ -138,7 +134,7 @@ void showDeviceConfig(const String& object) {
   Serial.print("Config version: "); Serial.println(jsonValue(object, "version"));
   Serial.print("Shop name: "); Serial.println(jsonValue(object, "shop_name"));
   Serial.print("Google Sheet: "); Serial.println(jsonValue(object, "google_sheet"));
-  Serial.print("Time input/pulse: "); Serial.println(jsonValue(object, "time_input_per_pulse"));
+  Serial.print("Time input/pulse: "); Serial.print(jsonValue(object, "time_input_per_pulse")); Serial.println(" minutes");
   Serial.println("------------------------------");
 }
 
@@ -179,10 +175,7 @@ void printLittleFSFiles() {
     Serial.println(dir.fileName());
   }
 
-  if (!anyFile) {
-    Serial.println("No files found in LittleFS root.");
-  }
-
+  if (!anyFile) Serial.println("No files found in LittleFS root.");
   Serial.println("------------------------------");
 }
 
@@ -191,9 +184,6 @@ bool loadWiFiConfig() {
 
   String configPath = WIFI_CONFIG;
 
-  // Normal Arduino ESP8266 LittleFS layout:
-  // sketch data/wifi_config.json -> LittleFS /wifi_config.json
-  // Also accept /data/wifi_config.json for compatibility.
   if (!LittleFS.exists(configPath)) {
     if (LittleFS.exists("/data/wifi_config.json")) {
       configPath = "/data/wifi_config.json";
@@ -244,7 +234,6 @@ bool saveWiFiConfig(const String& ssid, const String& password) {
 }
 
 void handleCaptivePortal() {
-  // Any unknown URL is redirected to the PyGit Wi-Fi setup page.
   server.sendHeader("Location", String("http://") + apIP.toString(), true);
   server.send(302, "text/plain", "Redirecting to PyGit WiFi Setup...");
 }
@@ -259,8 +248,6 @@ void startWiFiSetup() {
 
   WiFi.softAPConfig(apIP, apGateway, apSubnet);
   WiFi.softAP(ap.c_str());
-
-  // Captive portal DNS: every hostname resolves to the NodeMCU AP.
   dnsServer.start(DNS_PORT, "*", apIP);
 
   Serial.println("\n==============================");
@@ -284,7 +271,6 @@ void startWiFiSetup() {
       "</form></body></html>");
   });
 
-  // Common captive-portal probe URLs used by phones and PCs.
   server.on("/generate_204", HTTP_GET, []() {
     server.sendHeader("Location", "http://" + apIP.toString() + "/", true);
     server.send(302, "text/plain", "PyGit WiFi Setup");
@@ -338,7 +324,6 @@ bool flashPressedAtStartup() {
   Serial.println("Press FLASH within 5 seconds for Wi-Fi setup...");
 
   unsigned long started = millis();
-
   while (millis() - started < WIFI_SETUP_WINDOW) {
     if (digitalRead(FLASH_BUTTON) == LOW) return true;
     delay(10);
@@ -397,7 +382,6 @@ void checkDeviceConfig(const String& remote) {
 
   Serial.print("Local config:  ");
   Serial.println(localVersion.length() ? localVersion : "(none)");
-
   Serial.print("GitHub config: ");
   Serial.println(remoteVersion);
 
@@ -413,8 +397,7 @@ void checkDeviceConfig(const String& remote) {
 
   Serial.print("Active time per pulse: ");
   Serial.print(timeInputPerPulse);
-  Serial.println(" seconds");
-
+  Serial.println(" minutes");
   Serial.println("==============================");
 }
 
@@ -464,7 +447,6 @@ void checkGitHubConfig() {
 
 void ICACHE_RAM_ATTR coinInterrupt() {
   unsigned long now = millis();
-
   if (now - lastCoinInterrupt >= COIN_DEBOUNCE_MS) {
     lastCoinInterrupt = now;
     coinPulseDetected = true;
@@ -495,7 +477,7 @@ void clearActiveClient(const char* reason) {
 
   activeClient = false;
   lastCoinActivity = 0;
-  digitalWrite(TRIGGER_PIN, LOW);   // Coinslot OFF when no PC is active.
+  digitalWrite(TRIGGER_PIN, LOW);
   activePcName = "";
   activePcIP = IPAddress(0, 0, 0, 0);
   activePcPort = DEFAULT_PC_PORT;
@@ -503,9 +485,7 @@ void clearActiveClient(const char* reason) {
 
 bool connectToPCReceiver() {
   if (!activeClient) return false;
-
   if (receiverClient && receiverClient.connected()) return true;
-
   if (receiverClient) receiverClient.stop();
 
   Serial.print("Connecting to PC receiver: ");
@@ -589,7 +569,7 @@ void processRequest(const String& line, WiFiClient& client) {
 
   activeClient = true;
   lastCoinActivity = millis();
-  digitalWrite(TRIGGER_PIN, HIGH); // Coinslot ON for the accepted PC.
+  digitalWrite(TRIGGER_PIN, HIGH);
   activePcName = pcName;
   activePcIP = pcIP;
   activePcPort = pcPort;
@@ -637,12 +617,10 @@ void handleControlServer() {
         }
       }
     }
-
     return;
   }
 
   WiFiClient newClient = controlServer.available();
-
   if (!newClient) return;
 
   newClient.setTimeout(2);
@@ -658,7 +636,6 @@ void handleControlServer() {
 
   processRequest(line, newClient);
 
-  // If the request was rejected, this connection is no longer needed.
   if (!activeClient) {
     delay(10);
     newClient.stop();
@@ -683,7 +660,7 @@ void handleCoinPulse() {
   Serial.println("Pulse width assumption: 50 ms");
   Serial.print("Time input per pulse: ");
   Serial.print(timeInputPerPulse);
-  Serial.println(" seconds");
+  Serial.println(" minutes");
 
   if (!activeClient) {
     Serial.println("No active PC. Coin ignored.");
@@ -691,7 +668,6 @@ void handleCoinPulse() {
     return;
   }
 
-  // A valid coin pulse from the active PC wakes/keeps the coinslot ON.
   digitalWrite(TRIGGER_PIN, HIGH);
   lastCoinActivity = millis();
 
@@ -729,9 +705,6 @@ void setup() {
   loadLocalDeviceConfig();
 
   pinMode(COIN_PIN, INPUT_PULLUP);
-
-  // GPIO14 controls the coinslot.
-  // Keep it OFF during startup. HIGH turns the coinslot ON.
   pinMode(TRIGGER_PIN, OUTPUT);
   digitalWrite(TRIGGER_PIN, LOW);
 
@@ -766,6 +739,7 @@ void setup() {
   Serial.println("Control server: TCP 5001");
   Serial.println("PC receiver: TCP 5000");
   Serial.println("One-PC lock: ENABLED");
+  Serial.println("Time input unit: MINUTES");
   Serial.println("Waiting for Side A / Side B receiver...");
 
   lastCheck = millis();
@@ -780,8 +754,6 @@ void loop() {
   handleControlServer();
   handleCoinPulse();
 
-  // Turn the coinslot OFF after 10 seconds with no coin activity.
-  // The active PC lock is intentionally kept; only GPIO14 is turned OFF.
   if (activeClient && digitalRead(TRIGGER_PIN) == HIGH &&
       lastCoinActivity > 0 && millis() - lastCoinActivity >= COIN_IDLE_TIMEOUT_MS) {
     digitalWrite(TRIGGER_PIN, LOW);
