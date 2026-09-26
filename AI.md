@@ -4,17 +4,13 @@
 
 PyGit is the remote-update and deployment system for the PisoNet project.
 
-The main goal is simple:
-
-> Install the client once, then control normal application updates from GitHub without manually visiting every client PC.
+The goal is simple: install the client once, then control normal application updates from GitHub without manually visiting every client PC.
 
 ---
 
 # PisoNet Deployment Architecture
 
-The production deployment will use a compiled Windows EXE.
-
-```
+```text
 Developer PC
 │
 ├── PisoNetTimer.py
@@ -38,7 +34,7 @@ Developer PC
                 └── starts/updates client
 ```
 
-The client PC should not need Python, pip, PyInstaller, or manual module installation for the deployed application.
+The deployed client should not need Python, pip, PyInstaller, or manual module installation.
 
 ---
 
@@ -46,67 +42,55 @@ The client PC should not need Python, pip, PyInstaller, or manual module install
 
 ## Milestone 1 — Clean PisoNetTimer
 
-Current target:
+Completed cleanup:
 
-- Keep the existing PisoNet timer behavior.
-- Remove crash recovery.
-- Remove `PC1:shutdown`.
-- Remove `PC1:restart`.
-- Remove admin-key commands such as `PC1:+10:admin:KEY`.
-- Remove the admin-key configuration.
-- Keep normal timer commands such as `PC1:+10` and `PC1:-10`.
-- Keep NTP time checking and time-tampering protection.
-- Keep shop opening/closing schedule.
-- Keep fullscreen overlay.
-- Keep keyboard lock.
-- Keep mute/unmute.
-- Keep Google logging.
-- Keep automatic PC identification.
-- Keep the single-instance protection.
-- Keep the **INSERT COIN** button/manual coin test capability when the client UI is integrated.
-
-Milestone 1 code cleanup has been pushed to `pc/client/PisoNetTimer.py`.
+- Removed crash recovery.
+- Removed `PC1:shutdown`.
+- Removed `PC1:restart`.
+- Removed admin-key commands such as `PC1:+10:admin:KEY`.
+- Kept normal timer commands such as `PC1:+10` and `PC1:-10`.
+- Kept NTP time checking and time-tampering protection.
+- Kept shop opening/closing schedule.
+- Kept fullscreen kiosk behavior.
+- Kept keyboard lock capability.
+- Kept mute/unmute capability.
+- Kept Google logging.
+- Kept automatic PC identification.
+- Kept single-instance protection.
+- Added the **INSERT COIN** manual/test button.
 
 ---
 
 ## Milestone 2 — Build PisoNetClient.exe
 
-Build the cleaned PisoNetTimer source using PyInstaller.
+Current milestone.
 
-The result should be:
+Build the cleaned `PisoNetTimer.py` using PyInstaller.
 
-```
+Target:
+
+```text
 PisoNetClient.exe
 ```
 
 The EXE must contain the required Python runtime and application dependencies.
 
-The developer machine may use PyInstaller and Python packages. Client machines should not need to install those packages separately.
-
-Example build pattern:
-
-```
-pyinstaller --noconsole --onefile --manifest admin.manifest --name PisoNetClientvXXX main.py
-```
-
-The exact filename/version will be finalized during the build test.
-
 ### Milestone 2 test
-
-Before moving to the updater:
 
 1. Build the EXE.
 2. Copy the EXE to a test folder.
 3. Run it on the development PC.
-4. Verify the timer starts correctly.
-5. Verify normal time addition works.
-6. Verify the **INSERT COIN** button works.
-7. Verify the fullscreen overlay appears when time reaches zero.
-8. Verify shop open/close behavior.
-9. Verify NTP/time-tampering protection.
-10. Verify the application runs without manually installing the bundled modules.
+4. Verify fullscreen kiosk mode starts.
+5. Verify the PC name is displayed.
+6. Verify the timer is displayed.
+7. Verify **INSERT COIN** adds the test time.
+8. Verify normal network time addition works.
+9. Verify the fullscreen/locked behavior when time reaches zero.
+10. Verify shop open/close behavior.
+11. Verify NTP/time-tampering protection.
+12. Verify the EXE runs without manually installing the bundled modules.
 
-Do not move to the installer/updater until the standalone EXE is working.
+Do not move to the updater until the standalone EXE is working.
 
 ---
 
@@ -114,11 +98,9 @@ Do not move to the installer/updater until the standalone EXE is working.
 
 `setup.py` will become the stable client installer/updater.
 
-Its first version should remain intentionally simple.
-
 First-run flow:
 
-```
+```text
 PisoNetSetup
     ↓
 Check GitHub
@@ -129,46 +111,70 @@ Download latest PisoNetClient.exe
     ↓
 Save locally
     ↓
+Register Windows auto-start
+    ↓
 Run PisoNetClient.exe
 ```
 
-The client does not need Git.
-
-The client does not need `git pull`.
-
-The client does not need the PisoNet source code.
-
-The client only needs the setup/updater EXE.
+The client does not need Git, `git pull`, the PisoNet source code, or manual Python package installation.
 
 ---
 
-## Milestone 4 — Test Setup on One Client
+## Milestone 4 — Kiosk Auto-Start
+
+After the first installation, the client should automatically start `PisoNetClient.exe` when Windows starts/logs in.
+
+Expected behavior:
+
+```text
+Install PisoNetSetup.exe once
+        ↓
+Download PisoNetClient.exe
+        ↓
+Register auto-start
+        ↓
+Run client
+        ↓
+Restart Windows
+        ↓
+PisoNetClient starts automatically
+        ↓
+Fullscreen kiosk mode
+```
+
+The auto-start registration should be managed by the setup/updater, not hardcoded into the application itself.
+
+---
+
+## Milestone 5 — Test Setup on One Client
 
 Use one test client first.
 
 Expected result:
 
-```
+```text
 PisoNetSetup.exe
        ↓
 downloads PisoNetClient.exe
+       ↓
+registers auto-start
        ↓
 runs PisoNetClient.exe
        ↓
 PisoNet application works
 ```
 
-Test the complete client installation before deploying to other PCs.
+Test a Windows restart and confirm the client starts automatically.
 
 ---
 
-## Milestone 5 — GitHub Automatic Application Updates
+## Milestone 6 — GitHub Automatic Application Updates
 
-After the initial installation works, add automatic update checking.
+After the initial installation and auto-start work, add automatic update checking.
 
 Example:
 
-```
+```text
 Client version: 1.0.0
 
 GitHub:
@@ -185,19 +191,17 @@ Stop old client
 Start new client
 ```
 
-The user should only need to build the new EXE and push the release information to GitHub.
-
-Client PCs update automatically.
+Client PCs update automatically while retaining their auto-start configuration.
 
 ---
 
-## Milestone 6 — NodeMCU Coin Integration
+## Milestone 7 — NodeMCU Coin Integration
 
 After the standalone PisoNet client and updater are stable, integrate the NodeMCU coin controller.
 
 Expected flow:
 
-```
+```text
 Physical Coin
      ↓
 NodeMCU
@@ -217,9 +221,9 @@ NodeMCU will remain the coin-control device and will manage which PC is currentl
 
 # GitHub Release Structure
 
-The intended client release structure is:
+Intended structure:
 
-```
+```text
 PyGit/
 └── pc/
     └── client/
@@ -229,8 +233,6 @@ PyGit/
         └── releases/
             └── PisoNetClient.exe
 ```
-
-The exact release location can be adjusted if a simpler GitHub layout is found during implementation.
 
 ---
 
@@ -247,15 +249,11 @@ Example:
 }
 ```
 
-When a new application is released, update the version and publish the new EXE.
-
 ---
 
 # Development Workflow
 
-Normal development should be:
-
-```
+```text
 1. Edit PisoNetTimer.py
 2. Test locally
 3. Build PisoNetClient.exe
@@ -266,17 +264,17 @@ Normal development should be:
 8. Client downloads and runs the new EXE
 ```
 
-The developer should not manually edit or copy files on every client PC.
+The developer should not manually edit or copy application files on every client PC.
 
 ---
 
 # Important Rules
 
-- Keep the PisoNetTimer application functionality intact unless a change is explicitly requested.
+- Keep existing PisoNet functionality unless a change is explicitly requested.
 - **INSERT COIN must remain available for manual testing.**
-- Client deployment should use the compiled EXE, not raw Python source.
+- Client deployment uses the compiled EXE, not raw Python source.
 - Client PCs should not require manual Python module installation.
-- Normal application updates should come from GitHub.
+- Normal application updates come from GitHub.
 - Do not require Git on client PCs.
 - Do not require `git pull` on client PCs.
 - Keep the updater simple and stable.
@@ -291,11 +289,13 @@ The developer should not manually edit or copy files on every client PC.
 ### Completed
 - PyGit live-update concept tested successfully.
 - PisoNetTimer identified as the main PisoNet client application.
-- Milestone plan established.
-- PisoNetTimer cleanup for Milestone 1 pushed to GitHub.
+- Deployment milestone plan established.
+- Milestone 1 cleanup pushed.
+- Basic fullscreen kiosk UI added.
+- **INSERT COIN** manual/test button added.
 
 ### Current milestone
 **Milestone 2 — Build and test PisoNetClient.exe**
 
-### Next major goal
-Create a simple `setup.py`, build it as `PisoNetSetup.exe`, install it on one client, and verify that it can download and launch the current PisoNetClient from GitHub.
+### Next goal
+Build and test the standalone EXE. After that, create the simple `setup.py` and package it as `PisoNetSetup.exe` for one-client testing.
