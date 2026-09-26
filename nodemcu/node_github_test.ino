@@ -6,7 +6,7 @@
 const char* WIFI_CONFIG = "/wifi_config.json";
 
 const char* configURL =
-  "https://raw.githubusercontent.com/royalguard14/PyGit/refs/heads/main/nodemcu/data/config.json";
+  "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
 String wifiSSID = "";
 String wifiPassword = "";
@@ -103,8 +103,9 @@ void checkGitHubConfig() {
 
   HTTPClient http;
 
-  // Cache-busting helps request the current GitHub file.
-  String url = String(configURL) + "?pygit=" + String(millis());
+  // Use the GitHub Contents API with a raw-content Accept header.
+  // This avoids stale raw.githubusercontent.com branch caching.
+  String url = String(configURL) + "&pygit=" + String(millis());
 
   Serial.print("Config URL: ");
   Serial.println(url);
@@ -115,6 +116,10 @@ void checkGitHubConfig() {
   }
 
   http.setTimeout(15000);
+  http.addHeader("Accept", "application/vnd.github.raw+json");
+  http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
+  http.addHeader("Pragma", "no-cache");
+  http.addHeader("User-Agent", "PyGit-NodeMCU");
 
   int httpCode = http.GET();
 
