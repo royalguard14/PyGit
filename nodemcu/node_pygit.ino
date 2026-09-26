@@ -46,13 +46,45 @@ String jsonValue(const String& json, const String& key) {
   String token = """ + key + """;
   int p = json.indexOf(token);
   if (p < 0) return "";
+
   p = json.indexOf(':', p + token.length());
   if (p < 0) return "";
-  int a = json.indexOf('"', p + 1);
-  if (a < 0) return "";
-  int b = json.indexOf('"', a + 1);
-  if (b < 0) return "";
-  return json.substring(a + 1, b);
+
+  // Skip whitespace and find the opening quote.
+  int a = p + 1;
+  while (a < (int)json.length() && isspace((unsigned char)json[a])) a++;
+  if (a >= (int)json.length() || json[a] != '"') return "";
+
+  a++;
+
+  // Read the JSON string while honoring escaped characters.
+  String value = "";
+  bool escaped = false;
+
+  for (int i = a; i < (int)json.length(); i++) {
+    char c = json[i];
+
+    if (escaped) {
+      if (c == '"' || c == '\' || c == '/') value += c;
+      else if (c == 'n') value += '\n';
+      else if (c == 'r') value += '\r';
+      else if (c == 't') value += '\t';
+      else value += c;
+      escaped = false;
+      continue;
+    }
+
+    if (c == '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (c == '"') return value;
+
+    value += c;
+  }
+
+  return "";
 }
 
 String deviceObject(const String& json, const String& mac) {
