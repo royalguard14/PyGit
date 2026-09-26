@@ -1,4 +1,5 @@
 {
-  "version": "5.0.12",
-  "code": "code.py"
+  "version": "1.4.7",
+  "app": "PisoNetClient.exe",
+  "download": "https://raw.githubusercontent.com/royalguard14/PyGit/main/pc/client/PisoNetClient.exe"
 }
