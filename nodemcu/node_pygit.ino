@@ -380,8 +380,14 @@ void checkGitHubConfig() {
   String remote = http.getString();
   http.end();
   Serial.println("config.json downloaded.");
+  Serial.println("[PYGIT] Step 1/3: processing device configuration...");
+  delay(50);
   checkDeviceConfig(remote);
+  Serial.println("[PYGIT] Step 2/3: device configuration finished.");
+  Serial.println("[PYGIT] Step 3/3: checking firmware identity...");
+  delay(50);
   checkPyGitCodeUpdate();
+  Serial.println("[PYGIT] Update check finished.");
 }
 
 void setup() {
