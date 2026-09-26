@@ -2,315 +2,300 @@
 
 ## Purpose
 
-PyGit is the remote-update system for the PisoNet project.
+PyGit is the remote-update and deployment system for the PisoNet project.
 
-The project has two update paths:
+The main goal is simple:
 
-1. Windows client application updates through PyGit.
-2. NodeMCU firmware updates through GitHub OTA.
-
-The goal is that deployed client PCs and NodeMCU units do not need to be manually visited for normal software/firmware updates.
+> Install the client once, then control normal application updates from GitHub without manually visiting every client PC.
 
 ---
 
-## Python / Windows Architecture
+# PisoNet Deployment Architecture
+
+The production deployment will use a compiled Windows EXE.
 
 ```
-GitHub
-├── setup.py              # Stable local updater/launcher
-├── setup_backup.py       # Golden backup of setup.py
-├── code.py               # Live Python application
-├── control.json          # Current remote version + code filename
-└── nodemcu/              # ESP8266 source and firmware
-
-Client PC
-└── PyGit.exe
-    ├── checks GitHub
-    ├── compares control.json version
-    ├── downloads newer code.py
-    └── restarts the application
+Developer PC
+│
+├── PisoNetTimer.py
+│       │
+│       └── PyInstaller
+│               ↓
+│       PisoNetClient.exe
+│
+└── Push release files to GitHub
+                │
+                ▼
+             GitHub
+                │
+                ▼
+          Client PC
+                │
+        PisoNetSetup.exe
+                │
+                ├── checks GitHub
+                ├── downloads latest PisoNetClient.exe
+                └── starts/updates client
 ```
 
-### Python Update Workflow
-
-1. Edit `code.py`.
-2. Test it locally.
-3. Increase the version in `control.json`.
-4. Push the changes to GitHub.
-5. Running PyGit clients detect the newer version.
-6. PyGit downloads the new `code.py`, validates it, and restarts the application.
-
-If the remote and local versions are the same, the client keeps running the existing code and does not download it again.
-
-`git pull` is needed on the developer PC when `setup.py` itself changes. Deployed client PCs do not need git pull for normal application updates.
+The client PC should not need Python, pip, PyInstaller, or manual module installation for the deployed application.
 
 ---
 
-## Important Python Files
+# Project Milestones
 
-- `setup.py` — stable updater/launcher.
-- `setup_backup.py` — stable/golden backup. Do not modify casually.
-- `code.py` — live Python application fetched by PyGit.
-- `control.json` — remote application version and code filename.
-- `requirements.txt` — optional Python dependencies.
-- `.pygit_runtime/` — local runtime/cache files created by PyGit.
+## Milestone 1 — Clean PisoNetTimer
+
+Current target:
+
+- Keep the existing PisoNet timer behavior.
+- Remove crash recovery.
+- Remove `PC1:shutdown`.
+- Remove `PC1:restart`.
+- Remove admin-key commands such as `PC1:+10:admin:KEY`.
+- Remove the admin-key configuration.
+- Keep normal timer commands such as `PC1:+10` and `PC1:-10`.
+- Keep NTP time checking and time-tampering protection.
+- Keep shop opening/closing schedule.
+- Keep fullscreen overlay.
+- Keep keyboard lock.
+- Keep mute/unmute.
+- Keep Google logging.
+- Keep automatic PC identification.
+- Keep the single-instance protection.
+- Keep the **INSERT COIN** button/manual coin test capability when the client UI is integrated.
+
+Milestone 1 code cleanup has been pushed to `pc/client/PisoNetTimer.py`.
 
 ---
 
-# NodeMCU Architecture
+## Milestone 2 — Build PisoNetClient.exe
 
-The NodeMCU is the coin controller for the PisoNet clients.
+Build the cleaned PisoNetTimer source using PyInstaller.
+
+The result should be:
 
 ```
-Coinslot
-   ↓
-Custom Board
-   ↓
-D6 / GPIO12
-   ↓
+PisoNetClient.exe
+```
+
+The EXE must contain the required Python runtime and application dependencies.
+
+The developer machine may use PyInstaller and Python packages. Client machines should not need to install those packages separately.
+
+Example build pattern:
+
+```
+pyinstaller --noconsole --onefile --manifest admin.manifest --name PisoNetClientvXXX main.py
+```
+
+The exact filename/version will be finalized during the build test.
+
+### Milestone 2 test
+
+Before moving to the updater:
+
+1. Build the EXE.
+2. Copy the EXE to a test folder.
+3. Run it on the development PC.
+4. Verify the timer starts correctly.
+5. Verify normal time addition works.
+6. Verify the **INSERT COIN** button works.
+7. Verify the fullscreen overlay appears when time reaches zero.
+8. Verify shop open/close behavior.
+9. Verify NTP/time-tampering protection.
+10. Verify the application runs without manually installing the bundled modules.
+
+Do not move to the installer/updater until the standalone EXE is working.
+
+---
+
+## Milestone 3 — Basic setup.py
+
+`setup.py` will become the stable client installer/updater.
+
+Its first version should remain intentionally simple.
+
+First-run flow:
+
+```
+PisoNetSetup
+    ↓
+Check GitHub
+    ↓
+Read control.json
+    ↓
+Download latest PisoNetClient.exe
+    ↓
+Save locally
+    ↓
+Run PisoNetClient.exe
+```
+
+The client does not need Git.
+
+The client does not need `git pull`.
+
+The client does not need the PisoNet source code.
+
+The client only needs the setup/updater EXE.
+
+---
+
+## Milestone 4 — Test Setup on One Client
+
+Use one test client first.
+
+Expected result:
+
+```
+PisoNetSetup.exe
+       ↓
+downloads PisoNetClient.exe
+       ↓
+runs PisoNetClient.exe
+       ↓
+PisoNet application works
+```
+
+Test the complete client installation before deploying to other PCs.
+
+---
+
+## Milestone 5 — GitHub Automatic Application Updates
+
+After the initial installation works, add automatic update checking.
+
+Example:
+
+```
+Client version: 1.0.0
+
+GitHub:
+version: 1.0.1
+
+        ↓
+
+New version detected
+        ↓
+Download new PisoNetClient.exe
+        ↓
+Stop old client
+        ↓
+Start new client
+```
+
+The user should only need to build the new EXE and push the release information to GitHub.
+
+Client PCs update automatically.
+
+---
+
+## Milestone 6 — NodeMCU Coin Integration
+
+After the standalone PisoNet client and updater are stable, integrate the NodeMCU coin controller.
+
+Expected flow:
+
+```
+Physical Coin
+     ↓
 NodeMCU
-   ↑
-D5 / GPIO14
-   ↑
-Client ADD trigger
-   ↓
-Selected PC
-   ↓
-PisoNetKiosk TCP :5000
+     ↓
+COIN:10
+     ↓
+PisoNetClient
+     ↓
++10 minutes
 ```
 
-### Current GPIO assignments
+The manual **INSERT COIN** button remains available for testing.
 
-- **D6 / GPIO12** — COIN pulse input.
-- **D5 / GPIO14** — client trigger / target selection.
-- COIN pulse is approximately 50 ms.
-- Coin input uses edge detection rather than relying on the exact pulse duration.
-- A selected client has a timeout so a stuck selection does not remain active indefinitely.
-- After GPIO14 is released, the target is cleared and the NodeMCU is ready for the next client.
+NodeMCU will remain the coin-control device and will manage which PC is currently active.
 
 ---
 
-# NodeMCU Wi-Fi Configuration
+# GitHub Release Structure
 
-Wi-Fi credentials are **not stored in source code**.
-
-They are loaded from LittleFS:
+The intended client release structure is:
 
 ```
-nodemcu/
-└── data/
-    └── wifi_config.json
+PyGit/
+└── pc/
+    └── client/
+        ├── setup.py
+        ├── control.json
+        ├── PisoNetTimer.py
+        └── releases/
+            └── PisoNetClient.exe
 ```
+
+The exact release location can be adjusted if a simpler GitHub layout is found during implementation.
+
+---
+
+# control.json
+
+The updater will use a small control file to identify the current release.
 
 Example:
 
 ```json
 {
-  "ssid": "YOUR_WIFI_NAME",
-  "password": "YOUR_WIFI_PASSWORD"
+  "version": "1.0.0",
+  "app": "PisoNetClient.exe"
 }
 ```
 
-The real `wifi_config.json` must remain local and is ignored by Git.
+When a new application is released, update the version and publish the new EXE.
 
 ---
 
-# NodeMCU GitHub Connection Test
+# Development Workflow
 
-The initial GitHub connection test is:
+Normal development should be:
 
 ```
-nodemcu/
-├── node_github_test.ino
-└── node_test.txt
+1. Edit PisoNetTimer.py
+2. Test locally
+3. Build PisoNetClient.exe
+4. Test the EXE
+5. Update control.json
+6. Push release to GitHub
+7. Client PyGit updater detects the new version
+8. Client downloads and runs the new EXE
 ```
 
-The test has been successfully verified on the NodeMCU:
-
-- Wi-Fi connection succeeded.
-- GitHub returned HTTP 200.
-- `node_test.txt` was downloaded.
-- GitHub content was displayed in Serial Monitor.
-- The test therefore proved that the ESP8266 can reach the GitHub repository over HTTPS.
-
-`node_github_test.ino` reads Wi-Fi credentials from LittleFS and does not require ArduinoJson.
+The developer should not manually edit or copy files on every client PC.
 
 ---
 
-# NodeMCU Firmware OTA
+# Important Rules
 
-The production firmware is **`node.ino`**.
-
-There are no firmware version numbers on the NodeMCU.
-
-Instead, firmware identity is based on **SHA-256**.
-
-GitHub publishes:
-
-```
-nodemcu/
-├── firmware.bin
-└── firmware.sha256
-```
-
-The GitHub Actions workflow automatically builds `node.ino` into `firmware.bin` and calculates its SHA-256 hash.
-
-## OTA Startup Flow
-
-Every NodeMCU startup:
-
-```
-Start
-  ↓
-Mount LittleFS
-  ↓
-Load Wi-Fi configuration
-  ↓
-Connect Wi-Fi
-  ↓
-Download firmware.sha256
-  ↓
-Compare remote hash with local hash
-```
-
-If the hashes are equal:
-
-```
-SAME
- ↓
-No download
- ↓
-Run current firmware
-```
-
-If the hashes differ:
-
-```
-DIFFERENT
- ↓
-Download firmware.bin
- ↓
-Calculate SHA-256 while downloading
- ↓
-Compare downloaded hash with GitHub hash
- ↓
-If mismatch → abort update
- ↓
-If match → write OTA firmware
- ↓
-Save new hash to LittleFS
- ↓
-Restart
-```
-
-The local hash is changed **only after the firmware update has completed successfully**.
-
-If the download, hash verification, or OTA write fails, the old hash is retained. The NodeMCU therefore retries the update on a later startup instead of falsely marking the old firmware as current.
+- Keep the PisoNetTimer application functionality intact unless a change is explicitly requested.
+- **INSERT COIN must remain available for manual testing.**
+- Client deployment should use the compiled EXE, not raw Python source.
+- Client PCs should not require manual Python module installation.
+- Normal application updates should come from GitHub.
+- Do not require Git on client PCs.
+- Do not require `git pull` on client PCs.
+- Keep the updater simple and stable.
+- Test every release on one client before wider deployment.
+- NodeMCU integration comes after the standalone EXE and updater are stable.
+- NodeMCU Wi-Fi credentials must never be committed to GitHub.
 
 ---
 
-# GitHub Actions
+# Current Status
 
-`.github/workflows/build.yml` builds both systems.
+### Completed
+- PyGit live-update concept tested successfully.
+- PisoNetTimer identified as the main PisoNet client application.
+- Milestone plan established.
+- PisoNetTimer cleanup for Milestone 1 pushed to GitHub.
 
-### PyGit
+### Current milestone
+**Milestone 2 — Build and test PisoNetClient.exe**
 
-The workflow builds:
-
-```
-setup.py
-   ↓
-PyInstaller
-   ↓
-PyGit.exe
-```
-
-### NodeMCU
-
-The workflow builds:
-
-```
-node.ino
-   ↓
-Arduino CLI + ESP8266 core
-   ↓
-nodemcu/firmware.bin
-   ↓
-SHA-256
-   ↓
-nodemcu/firmware.sha256
-```
-
-The generated firmware and hash are committed back to the main branch automatically.
-
-The workflow uses GitHub Actions `GITHUB_TOKEN` with contents write permission for this generated firmware commit.
-
----
-
-# Arduino IDE / LittleFS
-
-The development firmware is initially uploaded to the NodeMCU through USB.
-
-The LittleFS data contains the local Wi-Fi configuration.
-
-For Arduino IDE 1.x, the ESP8266 LittleFS uploader is required:
-
-```
-Tools
-└── ESP8266 LittleFS Data Upload
-```
-
-The first firmware upload must be done over USB. After the OTA updater is running correctly, later firmware updates can happen through Wi-Fi.
-
----
-
-# Security
-
-The current GitHub HTTPS implementation uses `WiFiClientSecure::setInsecure()` for the initial OTA system.
-
-This provides encrypted transport but does not verify the GitHub server certificate. The SHA-256 check protects against accidental or corrupted firmware downloads, but it is not a cryptographic signature.
-
-A future hardening phase can add signed firmware verification so the NodeMCU accepts firmware only when it was signed by the trusted project key.
-
----
-
-# Project Rules
-
-- Keep the existing PisoNet kiosk code as the baseline unless explicitly asked to modify it.
-- Normal Windows application changes belong in `code.py`.
-- Deployed Windows clients must not require `git pull` for normal application updates.
-- NodeMCU Wi-Fi credentials must remain in local LittleFS configuration and must never be committed.
-- NodeMCU does not use firmware version numbers for OTA decisions.
-- NodeMCU compares SHA-256 hashes.
-- Only save the new local firmware hash after a successful OTA update.
-- Keep `node_github_test.ino` and `node_test.txt` as development/connection-test files.
-- `node.ino` is the production NodeMCU firmware.
-- Do not casually modify `setup_backup.py`.
-
----
-
-# Current Project Direction
-
-The intended final deployment is:
-
-```
-                  GITHUB
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-       PyGit                  NodeMCU
-          │                     │
-   control.json             firmware.sha256
-          │                     │
-   compare version           compare hash
-          │                     │
-       changed?              changed?
-       /     \\               /     \\
-     YES      NO             YES      NO
-      ↓        ↓              ↓        ↓
-  download    run          OTA       run
-      ↓                     ↓
-   restart                restart
-```
-
-The developer only needs to edit/test the source and push to GitHub. Deployed systems perform the necessary update checks automatically.
+### Next major goal
+Create a simple `setup.py`, build it as `PisoNetSetup.exe`, install it on one client, and verify that it can download and launch the current PisoNetClient from GitHub.
