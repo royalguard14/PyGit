@@ -1,3 +1,9 @@
 push.bat
 nodemcu/data/wifi_config.json
 .pygit_runtime/
+
+# PyInstaller build artifacts
+pc/client/*.exe
+pc/client/*.spec
+pc/client/build/
+pc/client/dist/
