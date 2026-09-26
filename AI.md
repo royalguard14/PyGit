@@ -10,7 +10,7 @@ The goal is simple: install the client once, then control normal application upd
 
 # PisoNet Deployment Architecture
 
-```text
+```
 Developer PC
 │
 ├── PisoNetTimer.py
@@ -69,7 +69,7 @@ Build the cleaned `PisoNetTimer.py` using PyInstaller.
 
 Target:
 
-```text
+```
 PisoNetClient.exe
 ```
 
@@ -100,7 +100,7 @@ Do not move to the updater until the standalone EXE is working.
 
 First-run flow:
 
-```text
+```
 PisoNetSetup
     ↓
 Check GitHub
@@ -109,7 +109,9 @@ Read control.json
     ↓
 Download latest PisoNetClient.exe
     ↓
-Save locally
+Install to the designated PisoNet program folder
+    ↓
+Create Windows Firewall rule for TCP 5000
     ↓
 Register Windows auto-start
     ↓
@@ -117,6 +119,34 @@ Run PisoNetClient.exe
 ```
 
 The client does not need Git, `git pull`, the PisoNet source code, or manual Python package installation.
+
+### Installer requirement
+
+This is a **real installation**, not a simple portable EXE copy.
+
+The installed PisoNet client should:
+
+- Be installed into a protected/controlled installation directory.
+- Not be casually removable by simply deleting the main EXE.
+- Have a dedicated **PisoNet Remover/Uninstaller** for normal removal.
+- Keep the installation, auto-start, firewall rule, and updater components managed together.
+- The remover/uninstaller will be the intended way to completely remove PisoNet.
+
+### Hidden kiosk operation requirement
+
+The final production kiosk client is intended to run quietly in the background while presenting its kiosk interface to the user.
+
+Requirements for the final production build:
+
+- No normal taskbar presence.
+- No normal desktop shortcut unless explicitly needed for administration.
+- The application should not expose unnecessary windows or console windows.
+- Background/service/updater components should operate quietly.
+- The production deployment should minimize casual visibility in normal Windows UI.
+
+**Important:** this is a kiosk/deployment requirement, not a requirement to create malware or evade legitimate security/administration tools. Windows security and legitimate administrator access must remain possible.
+
+Do not implement these hidden/locked installation behaviors yet. They are planned for the installer/production phase.
 
 ---
 
@@ -126,7 +156,7 @@ After the first installation, the client should automatically start `PisoNetClie
 
 Expected behavior:
 
-```text
+```
 Install PisoNetSetup.exe once
         ↓
 Download PisoNetClient.exe
@@ -152,10 +182,12 @@ Use one test client first.
 
 Expected result:
 
-```text
+```
 PisoNetSetup.exe
        ↓
-downloads PisoNetClient.exe
+installs PisoNetClient.exe
+       ↓
+creates TCP 5000 firewall rule
        ↓
 registers auto-start
        ↓
@@ -174,7 +206,7 @@ After the initial installation and auto-start work, add automatic update checkin
 
 Example:
 
-```text
+```
 Client version: 1.0.0
 
 GitHub:
@@ -201,7 +233,7 @@ After the standalone PisoNet client and updater are stable, integrate the NodeMC
 
 Expected flow:
 
-```text
+```
 Physical Coin
      ↓
 NodeMCU
@@ -219,11 +251,86 @@ NodeMCU will remain the coin-control device and will manage which PC is currentl
 
 ---
 
+# PisoNet Client Network Architecture
+
+The PisoNet client TCP server on **port 5000 is intended to remain ON/listening continuously** while the client is running.
+
+This is separate from whether that PC is currently receiving coins.
+
+```
+PisoNetClient
+     │
+     └── TCP Server :5000
+             │
+             ├── NodeMCU coin messages
+             ├── Phone/admin commands
+             └── Future control commands
+```
+
+This allows a phone or another authorized controller on the LAN to send commands even when the client is not currently receiving coins.
+
+Examples of the intended command channel:
+
+```
+PC1:+10
+PC1:-10
+```
+
+The exact phone/API authentication and command-security design will be handled later.
+
+The TCP listener should therefore **not** be turned off simply because the user pressed STOP RECEIVING or because the NodeMCU coinslot is idle.
+
+---
+
+# NodeMCU Architecture
+
+NodeMCU listens on **TCP 5001**.
+
+Each PisoNet client listens on **TCP 5000**.
+
+```
+PC → NodeMCU :5001
+       REQUEST
+          ↓
+NodeMCU locks one active PC
+          ↓
+GPIO14 HIGH
+          ↓
+Coin detected on GPIO12
+          ↓
+NodeMCU → active PC :5000
+          COIN:10
+```
+
+Only one PC may be active for coin receiving at a time.
+
+The NodeMCU remains the final authority for the active-PC lock.
+
+When the active PC releases:
+
+```
+PC → NodeMCU :5001
+       RELEASE
+          ↓
+ACTIVE = NONE
+          ↓
+GPIO14 LOW
+```
+
+The NodeMCU coin-slot idle timeout is independent of the active-PC lock:
+
+- No coin for 10 seconds → GPIO14 LOW.
+- Active PC ownership remains.
+- A new coin from the active PC can turn GPIO14 HIGH again and reset the timer.
+- If no PC is active, coin pulses are ignored.
+
+---
+
 # GitHub Release Structure
 
 Intended structure:
 
-```text
+```
 PyGit/
 └── pc/
     └── client/
@@ -253,7 +360,7 @@ Example:
 
 # Development Workflow
 
-```text
+```
 1. Edit PisoNetTimer.py
 2. Test locally
 3. Build PisoNetClient.exe
@@ -281,6 +388,9 @@ The developer should not manually edit or copy application files on every client
 - Test every release on one client before wider deployment.
 - NodeMCU integration comes after the standalone EXE and updater are stable.
 - NodeMCU Wi-Fi credentials must never be committed to GitHub.
+- PisoNet client TCP port **5000 should remain listening while the client is running**, so authorized phone/admin commands can reach it.
+- The final installer/remover must manage installation, auto-start, firewall configuration, and application files as one deployment.
+- Do not implement the hidden production-installation behavior until the installer phase is explicitly started.
 
 ---
 
@@ -293,6 +403,9 @@ The developer should not manually edit or copy application files on every client
 - Milestone 1 cleanup pushed.
 - Basic fullscreen kiosk UI added.
 - **INSERT COIN** manual/test button added.
+- NodeMCU coin-control architecture established.
+- NodeMCU single-active-PC lock established.
+- Client TCP port 5000 established as an always-listening command/receiver channel.
 
 ### Current milestone
 **Milestone 2 — Build and test PisoNetClient.exe**
