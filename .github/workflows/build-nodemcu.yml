@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'nodemcu/node_pygit.ino'
-      - 'nodemcu/node_pygit_update.ino'
       - '.github/workflows/build-nodemcu.yml'
   workflow_dispatch:
 
@@ -35,8 +34,6 @@ jobs:
         run: |
           mkdir -p build/sketch
           cp nodemcu/node_pygit.ino build/sketch/sketch.ino
-          cp nodemcu/node_pygit_update.ino build/sketch/node_pygit_update.ino
-
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
             --output-dir build \
