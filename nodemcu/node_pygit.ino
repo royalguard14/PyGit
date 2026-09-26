@@ -3,10 +3,14 @@
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <ESP8266WebServer.h>
+#include <Updater.h>
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 const char* DEVICE_CONFIG_FILE = "/device_config.json";
 const char* CONFIG_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
+const char* PYGIT_FIRMWARE_URL = "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.bin";
+const char* PYGIT_MD5_URL = "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.md5";
+const char* PYGIT_LOCAL_HASH_FILE = "/pygit_firmware.md5";
 
 const uint8_t FLASH_BUTTON = 0;
 const unsigned long WIFI_SETUP_WINDOW = 5000;
@@ -15,9 +19,6 @@ unsigned long lastCheck = 0;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
-
-// Implemented in node_pygit_update.ino, compiled as part of this sketch.
-void checkPyGitCodeUpdate();
 
 String jsonValue(const String& json, const String& key) {
   String token = "\"" + key + "\"";
@@ -204,6 +205,148 @@ void checkDeviceConfig(const String& remote) {
   Serial.println("==============================");
 }
 
+String normalizeHash(String value) {
+  value.trim();
+  int p = value.indexOf(' ');
+  if (p > 0) value = value.substring(0, p);
+  p = value.indexOf('\t');
+  if (p > 0) value = value.substring(0, p);
+  value.trim();
+  value.toLowerCase();
+  return value;
+}
+
+String localFirmwareHash() {
+  if (!LittleFS.exists(PYGIT_LOCAL_HASH_FILE)) return "";
+  File f = LittleFS.open(PYGIT_LOCAL_HASH_FILE, "r");
+  if (!f) return "";
+  String h = normalizeHash(f.readString());
+  f.close();
+  return h;
+}
+
+bool saveFirmwareHash(const String& hash) {
+  File f = LittleFS.open(PYGIT_LOCAL_HASH_FILE, "w");
+  if (!f) return false;
+  f.println(hash);
+  f.close();
+  return true;
+}
+
+String remoteFirmwareHash() {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = String(PYGIT_MD5_URL) + "?pygit=" + String(millis());
+
+  Serial.print("Update identity URL: "); Serial.println(url);
+  if (!http.begin(client, url)) return "";
+  http.setTimeout(15000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(5);
+  http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
+  http.addHeader("Pragma", "no-cache");
+  http.addHeader("User-Agent", "PyGit-NodeMCU");
+
+  int code = http.GET();
+  Serial.print("Update identity HTTP Code: "); Serial.println(code);
+  if (code != HTTP_CODE_OK) { http.end(); return ""; }
+
+  String h = normalizeHash(http.getString());
+  http.end();
+  if (h.length() != 32) return "";
+  return h;
+}
+
+bool downloadFirmware(const String& expectedHash) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = String(PYGIT_FIRMWARE_URL) + "?pygit=" + String(millis());
+
+  Serial.println("Downloading updated PyGit code...");
+  Serial.print("Firmware URL: "); Serial.println(url);
+  if (!http.begin(client, url)) return false;
+  http.setTimeout(30000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(5);
+  http.useHTTP10(true);
+  http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
+  http.addHeader("Pragma", "no-cache");
+  http.addHeader("User-Agent", "PyGit-NodeMCU");
+
+  int code = http.GET();
+  Serial.print("Firmware HTTP Code: "); Serial.println(code);
+  if (code != HTTP_CODE_OK) { http.end(); return false; }
+
+  int size = http.getSize();
+  Serial.print("Firmware size: "); Serial.print(size); Serial.println(" bytes");
+  if (size <= 0) { http.end(); return false; }
+
+  WiFiClient* stream = http.getStreamPtr();
+  if (!stream) { http.end(); return false; }
+
+  if (!Update.begin((size_t)size, U_FLASH)) {
+    Serial.print("Update.begin() FAILED: "); Serial.println(Update.getErrorString());
+    http.end(); return false;
+  }
+
+  if (!Update.setMD5(expectedHash.c_str())) {
+    Serial.println("Could not configure firmware MD5 verification.");
+    Update.end(); http.end(); return false;
+  }
+
+  size_t written = Update.writeStream(*stream);
+  Serial.print("Written: "); Serial.print(written); Serial.print("/"); Serial.println(size);
+
+  if (written != (size_t)size) {
+    Serial.print("Firmware write FAILED: "); Serial.println(Update.getErrorString());
+    Update.end(); http.end(); return false;
+  }
+
+  if (!Update.end() || !Update.isFinished()) {
+    Serial.print("Firmware update FAILED: "); Serial.println(Update.getErrorString());
+    http.end(); return false;
+  }
+
+  http.end();
+  saveFirmwareHash(expectedHash);
+  Serial.println("PyGit code update successful!");
+  Serial.println("Restarting into updated code...");
+  delay(1000);
+  ESP.restart();
+  return true;
+}
+
+void checkPyGitCodeUpdate() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  Serial.println("\n==============================");
+  Serial.println("PYGIT CODE UPDATE CHECK");
+  Serial.println("==============================");
+
+  String remoteHash = remoteFirmwareHash();
+  if (!remoteHash.length()) {
+    Serial.println("Update check skipped.");
+    Serial.println("==============================");
+    return;
+  }
+
+  String localHash = localFirmwareHash();
+  Serial.print("Local code identity:  "); Serial.println(localHash.length() ? localHash : "(none)");
+  Serial.print("GitHub code identity: "); Serial.println(remoteHash);
+
+  if (localHash == remoteHash) {
+    Serial.println("Code is up to date.");
+    Serial.println("==============================");
+    return;
+  }
+
+  Serial.println("Different code detected. Downloading latest firmware...");
+  Serial.println("==============================");
+  downloadFirmware(remoteHash);
+}
+
 void checkGitHubConfig() {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -218,7 +361,6 @@ void checkGitHubConfig() {
     Serial.println("HTTP connection setup FAILED.");
     return;
   }
-
   http.setTimeout(15000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.setRedirectLimit(5);
@@ -238,7 +380,6 @@ void checkGitHubConfig() {
   String remote = http.getString();
   http.end();
   Serial.println("config.json downloaded.");
-
   checkDeviceConfig(remote);
   checkPyGitCodeUpdate();
 }
@@ -246,7 +387,6 @@ void checkGitHubConfig() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-
   Serial.println("\n==============================");
   Serial.println("NodeMCU PyGit");
   Serial.println("==============================");
@@ -259,10 +399,9 @@ void setup() {
 
   if (flashPressedAtStartup()) startWiFiSetup();
   if (!loadWiFiConfig()) startWiFiSetup();
-
   Serial.println("Wi-Fi configuration loaded from LittleFS.");
-  if (!connectWiFi()) startWiFiSetup();
 
+  if (!connectWiFi()) startWiFiSetup();
   Serial.println("\nPyGit base code online.");
   checkGitHubConfig();
   lastCheck = millis();
