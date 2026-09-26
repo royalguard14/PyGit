@@ -30,6 +30,7 @@ class CoinReceiver:
         self.root.resizable(False, False)
 
         self.receiving = False
+        self.requesting = False
         self.coins = 0
         self.total_time = 0
         self.local_ip = get_local_ip()
@@ -119,14 +120,6 @@ class CoinReceiver:
             )
             sock.settimeout(5)
 
-            # NodeMCU may send a greeting first.
-            try:
-                greeting = sock.recv(128).decode("utf-8", errors="ignore").strip()
-                if greeting and greeting != "PYGIT READY":
-                    pass
-            except socket.timeout:
-                pass
-
             request = f"REQUEST|{PC_NAME}|{self.local_ip}|{PC_PORT}\n"
             sock.sendall(request.encode("utf-8"))
 
@@ -179,6 +172,8 @@ class CoinReceiver:
             self.set_status("Status: NOT RECEIVING")
             return
 
+        self.requesting = True
+        self.receive_button.config(state="disabled")
         self.set_status("Status: REQUESTING NODEMCU...")
 
         # Do the network request outside Tkinter's main thread.
@@ -192,19 +187,28 @@ class CoinReceiver:
 
         if accepted:
             self.receiving = True
+            self.requesting = False
             self.root.after(0, lambda: self.receive_button.config(
-                text="STOP RECEIVING"
+                text="STOP RECEIVING", state="normal"
             ))
             self.set_status("Status: RECEIVING COINS")
             return
 
         self.receiving = False
+        self.requesting = False
 
-        if response.startswith("REJECT"):
+        if response.startswith("REJECTED|ACTIVE|"):
+            parts = response.split("|")
+            active_pc = parts[2] if len(parts) > 2 else "another PC"
+            self.set_status(f"Status: {active_pc} IS RECEIVING")
+        elif response.startswith("REJECT") or response.startswith("REJECTED|"):
             self.set_status("Status: ANOTHER PC IS RECEIVING")
         else:
             self.set_status("Status: NODEMCU CONNECTION FAILED")
 
+        self.root.after(0, lambda: self.receive_button.config(
+            text="RECEIVE COINS", state="normal"
+        ))
         self.root.after(2500, self.restore_idle_status)
 
     def restore_idle_status(self):
