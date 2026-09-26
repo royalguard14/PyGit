@@ -3,7 +3,7 @@
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266httpUpdate.h>
+#include <Updater.h>
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 const char* DEVICE_CONFIG_FILE = "/device_config.json";
@@ -283,6 +283,126 @@ bool connectToWiFi() {
   return true;
 }
 
+int compareFirmwareVersions(const String& a, const String& b) {
+  int a1 = 0, a2 = 0, a3 = 0;
+  int b1 = 0, b2 = 0, b3 = 0;
+
+  sscanf(a.c_str(), "%d.%d.%d", &a1, &a2, &a3);
+  sscanf(b.c_str(), "%d.%d.%d", &b1, &b2, &b3);
+
+  if (a1 != b1) return (a1 > b1) ? 1 : -1;
+  if (a2 != b2) return (a2 > b2) ? 1 : -1;
+  if (a3 != b3) return (a3 > b3) ? 1 : -1;
+
+  return 0;
+}
+
+bool performFirmwareOTA() {
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  String url = String(FIRMWARE_URL) + "?pygit=" + String(millis());
+
+  Serial.println("Connecting to firmware server...");
+  Serial.print("Firmware URL: ");
+  Serial.println(url);
+
+  if (!http.begin(client, url)) {
+    Serial.println("OTA HTTP setup FAILED.");
+    return false;
+  }
+
+  // GitHub Raw/CDN may redirect. Follow GET redirects.
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(5);
+  http.setTimeout(30000);
+  http.useHTTP10(true);
+  http.setUserAgent("PyGit-NodeMCU");
+  http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
+  http.addHeader("Pragma", "no-cache");
+
+  int httpCode = http.GET();
+
+  Serial.print("Firmware HTTP Code: ");
+  Serial.println(httpCode);
+
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.print("Firmware download FAILED: ");
+    Serial.println(http.errorToString(httpCode));
+    Serial.print("HTTP error code: ");
+    Serial.println(httpCode);
+    http.end();
+    return false;
+  }
+
+  int contentLength = http.getSize();
+
+  Serial.print("Firmware size: ");
+  Serial.print(contentLength);
+  Serial.println(" bytes");
+
+  if (contentLength <= 0) {
+    Serial.println("OTA FAILED: Server did not provide a valid firmware size.");
+    http.end();
+    return false;
+  }
+
+  WiFiClient* stream = http.getStreamPtr();
+
+  if (!stream) {
+    Serial.println("OTA FAILED: Firmware stream is unavailable.");
+    http.end();
+    return false;
+  }
+
+  // Start writing the downloaded binary directly to the OTA partition.
+  if (!Update.begin((size_t)contentLength, U_FLASH)) {
+    Serial.print("OTA FAILED: Update.begin(): ");
+    Serial.println(Update.getErrorString());
+    http.end();
+    return false;
+  }
+
+  Serial.println("Downloading firmware to flash...");
+
+  size_t written = Update.writeStream(*stream);
+
+  Serial.print("Written: ");
+  Serial.print(written);
+  Serial.print("/");
+  Serial.println(contentLength);
+
+  if (written != (size_t)contentLength) {
+    Serial.print("OTA FAILED: Incomplete firmware download. Update error: ");
+    Serial.println(Update.getErrorString());
+    Update.end();
+    http.end();
+    return false;
+  }
+
+  if (!Update.end()) {
+    Serial.print("OTA FAILED: Update.end(): ");
+    Serial.println(Update.getErrorString());
+    http.end();
+    return false;
+  }
+
+  http.end();
+
+  if (!Update.isFinished()) {
+    Serial.println("OTA FAILED: Update is not marked as finished.");
+    return false;
+  }
+
+  Serial.println("OTA update successful!");
+  Serial.println("Restarting into new firmware...");
+  delay(1000);
+  ESP.restart();
+
+  return true;
+}
+
 void checkForFirmwareUpdate(const String& remoteConfig) {
   String remoteVersion = readGeneralFirmwareVersion(remoteConfig);
 
@@ -300,38 +420,31 @@ void checkForFirmwareUpdate(const String& remoteConfig) {
   Serial.print("GitHub general:  ");
   Serial.println(remoteVersion);
 
-  if (remoteVersion == LOCAL_FIRMWARE_VERSION) {
+  int versionComparison = compareFirmwareVersions(
+    remoteVersion,
+    String(LOCAL_FIRMWARE_VERSION)
+  );
+
+  if (versionComparison == 0) {
     Serial.println("Firmware is up to date.");
     Serial.println("==============================");
     return;
   }
 
-  Serial.println("New firmware detected!");
+  // Never downgrade automatically.
+  if (versionComparison < 0) {
+    Serial.println("GitHub firmware is older than local firmware.");
+    Serial.println("No OTA update will be performed.");
+    Serial.println("==============================");
+    return;
+  }
+
+  Serial.println("Newer firmware detected!");
   Serial.println("Starting OTA update...");
   Serial.println("==============================");
 
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  String url = String(FIRMWARE_URL) + "?pygit=" + String(millis());
-  t_httpUpdate_return result = ESPhttpUpdate.update(client, url);
-
-  switch (result) {
-    case HTTP_UPDATE_FAILED:
-      Serial.print("OTA update FAILED. Error: ");
-      Serial.println(ESPhttpUpdate.getLastError());
-      Serial.print("Message: ");
-      Serial.println(ESPhttpUpdate.getLastErrorString());
-      break;
-    case HTTP_UPDATE_NO_UPDATES:
-      Serial.println("OTA: No update available.");
-      break;
-    case HTTP_UPDATE_OK:
-      Serial.println("OTA update successful. Restarting...");
-      break;
-  }
+  performFirmwareOTA();
 }
-
 void checkDeviceConfiguration(const String& remoteConfig) {
   String deviceMAC = WiFi.macAddress();
   String deviceObject = readDeviceObject(remoteConfig, deviceMAC);
