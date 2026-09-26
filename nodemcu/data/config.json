@@ -1,7 +1,4 @@
 {
-  "general_version": {
-    "ino": "1.0.2"
-  },
   "devices": {
     "D8:BC:38:B2:00:D8": {
       "version": "1.0.0",
