@@ -13,9 +13,8 @@ const unsigned long SETUP_WINDOW = 5000;
 const unsigned long UPDATE_CHECK_INTERVAL = 60000;
 unsigned long lastUpdateCheck = 0;
 
-// This is the firmware version of this deployable application.
-// This value is NOT changed automatically by GitHub Actions.
-const char* LOCAL_FIRMWARE_VERSION = "1.0.2";
+// Firmware version. GitHub Actions does NOT change this automatically.
+const char* LOCAL_FIRMWARE_VERSION = "1.0.3";
 
 const char* FIRMWARE_URL =
   "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.bin";
@@ -29,7 +28,7 @@ String wifiPassword = "";
 ESP8266WebServer server(80);
 
 String readJsonValue(const String& json, const String& key) {
-  String searchKey = "\"" + key + "\"";
+  String searchKey = "\""+ key + "\"";
   int keyPos = json.indexOf(searchKey);
   if (keyPos < 0) return "";
 
@@ -46,7 +45,7 @@ String readJsonValue(const String& json, const String& key) {
 }
 
 String readDeviceObject(const String& json, const String& mac) {
-  String deviceKey = "\"" + mac + "\"";
+  String deviceKey = "\""+ mac + "\"";
   int devicePos = json.indexOf(deviceKey);
   if (devicePos < 0) return "";
 
@@ -110,7 +109,6 @@ void showDeviceConfig(const String& deviceObject) {
     Serial.println(timeInput);
   }
 
-  // Password is deliberately not printed to Serial.
   Serial.println("------------------------------");
 }
 
@@ -524,11 +522,7 @@ void checkGitHubConfig() {
 
   Serial.println("config.json downloaded.");
 
-  // devices[MAC].version is ONLY for device configuration.
-  // It never triggers firmware OTA.
   checkDeviceConfiguration(payload);
-
-  // Only general_version.ino controls firmware OTA.
   checkForFirmwareUpdate(payload);
 }
 
@@ -569,6 +563,7 @@ void setup() {
   Serial.print("PyGit Firmware ");
   Serial.println(LOCAL_FIRMWARE_VERSION);
   Serial.println("Hello from node_github_test.ino!");
+  Serial.println("OTA TEST BUILD: 1.0.3");
 
   checkGitHubConfig();
   lastUpdateCheck = millis();
