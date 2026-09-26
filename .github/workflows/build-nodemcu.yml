@@ -32,11 +32,13 @@ jobs:
 
       - name: Compile NodeMCU firmware
         run: |
-          mkdir -p build
+          mkdir -p build/sketch
+          cp nodemcu/node_pygit.ino build/sketch/nodemcu.ino
+
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
             --output-dir build \
-            nodemcu/node_pygit.ino
+            build/sketch
 
       - name: Sync firmware version and publish firmware.bin
         run: |
@@ -65,7 +67,7 @@ jobs:
           print("General firmware version:", version)
           PY
 
-          cp build/node_pygit.ino.bin nodemcu/firmware.bin
+          cp build/nodemcu.ino.bin nodemcu/firmware.bin
 
           git config user.name "PyGit Build Bot"
           git config user.email "actions@github.com"
