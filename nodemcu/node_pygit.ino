@@ -65,7 +65,7 @@ String jsonValue(const String& json, const String& key) {
     char c = json[i];
 
     if (escaped) {
-      if (c == '"' || c == '\' || c == '/') value += c;
+      if (c == '"' || c == 92 || c == '/') value += c;
       else if (c == 'n') value += '\n';
       else if (c == 'r') value += '\r';
       else if (c == 't') value += '\t';
