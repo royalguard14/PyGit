@@ -3,7 +3,6 @@
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <ESP8266WebServer.h>
-#include <Updater.h>
 
 const char* WIFI_CONFIG = "/wifi_config.json";
 const char* DEVICE_CONFIG_FILE = "/device_config.json";
@@ -12,12 +11,6 @@ const int SETUP_BUTTON_PIN = 0;
 const unsigned long SETUP_WINDOW = 5000;
 const unsigned long UPDATE_CHECK_INTERVAL = 60000;
 unsigned long lastUpdateCheck = 0;
-
-// Firmware version of this physically flashed base firmware.
-const char* LOCAL_FIRMWARE_VERSION = "1.0.1";
-
-const char* FIRMWARE_URL =
-  "https://raw.githubusercontent.com/royalguard14/PyGit/main/nodemcu/firmware.bin";
 
 const char* configURL =
   "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
@@ -52,20 +45,37 @@ String readDeviceObject(const String& json, const String& mac) {
   int objectStart = json.indexOf('{', devicePos);
   if (objectStart < 0) return "";
 
-  int objectEnd = json.indexOf('}', objectStart);
-  if (objectEnd < 0) return "";
+  int depth = 0;
+  bool inString = false;
+  bool escaped = false;
 
-  return json.substring(objectStart, objectEnd + 1);
-}
+  for (int i = objectStart; i < (int)json.length(); i++) {
+    char c = json[i];
 
-String readGeneralFirmwareVersion(const String& json) {
-  int generalPos = json.indexOf("\"general_version\"");
-  if (generalPos < 0) return "";
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (c == '\\') {
+        escaped = true;
+      } else if (c == '"') {
+        inString = false;
+      }
+      continue;
+    }
 
-  int inoPos = json.indexOf("\"ino\"", generalPos);
-  if (inoPos < 0) return "";
+    if (c == '"') {
+      inString = true;
+    } else if (c == '{') {
+      depth++;
+    } else if (c == '}') {
+      depth--;
+      if (depth == 0) {
+        return json.substring(objectStart, i + 1);
+      }
+    }
+  }
 
-  return readJsonValue(json.substring(inoPos), "ino");
+  return "";
 }
 
 String readDeviceConfigVersion(const String& deviceObject) {
@@ -89,6 +99,7 @@ void showDeviceConfig(const String& deviceObject) {
   Serial.println("------------------------------");
   Serial.println("DEVICE CONFIGURATION");
   Serial.println("------------------------------");
+
   Serial.print("Config version: ");
   Serial.println(readJsonValue(deviceObject, "version"));
 
@@ -100,16 +111,17 @@ void showDeviceConfig(const String& deviceObject) {
     Serial.print("Shop name: ");
     Serial.println(shopName);
   }
+
   if (googleSheet.length()) {
     Serial.print("Google Sheet: ");
     Serial.println(googleSheet);
   }
+
   if (timeInput.length()) {
     Serial.print("Time input/pulse: ");
     Serial.println(timeInput);
   }
 
-  // Do not print passwords to Serial.
   Serial.println("------------------------------");
 }
 
@@ -132,16 +144,19 @@ bool saveWiFiConfig(const String& ssid, const String& password) {
 
   wifiSSID = ssid;
   wifiPassword = password;
+
   Serial.println("Wi-Fi configuration saved to LittleFS.");
   return true;
 }
 
 bool setupButtonRequested() {
   pinMode(SETUP_BUTTON_PIN, INPUT_PULLUP);
+
   Serial.println();
   Serial.println("Press FLASH within 5 seconds for Wi-Fi setup...");
 
   unsigned long startTime = millis();
+
   while (millis() - startTime < SETUP_WINDOW) {
     if (digitalRead(SETUP_BUTTON_PIN) == LOW) {
       Serial.println("FLASH button detected.");
@@ -149,6 +164,7 @@ bool setupButtonRequested() {
       delay(300);
       return true;
     }
+
     delay(10);
   }
 
@@ -258,10 +274,12 @@ void setupWiFiPortal() {
 
 bool connectToWiFi() {
   Serial.print("Connecting to WiFi");
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
 
   int attempts = 0;
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -280,171 +298,10 @@ bool connectToWiFi() {
   Serial.println(WiFi.localIP());
   Serial.print("Device MAC: ");
   Serial.println(WiFi.macAddress());
-  return true;
-}
-
-int compareFirmwareVersions(const String& a, const String& b) {
-  int a1 = 0, a2 = 0, a3 = 0;
-  int b1 = 0, b2 = 0, b3 = 0;
-
-  sscanf(a.c_str(), "%d.%d.%d", &a1, &a2, &a3);
-  sscanf(b.c_str(), "%d.%d.%d", &b1, &b2, &b3);
-
-  if (a1 != b1) return (a1 > b1) ? 1 : -1;
-  if (a2 != b2) return (a2 > b2) ? 1 : -1;
-  if (a3 != b3) return (a3 > b3) ? 1 : -1;
-
-  return 0;
-}
-
-bool performFirmwareOTA() {
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  HTTPClient http;
-  String url = String(FIRMWARE_URL) + "?pygit=" + String(millis());
-
-  Serial.println("Connecting to firmware server...");
-  Serial.print("Firmware URL: ");
-  Serial.println(url);
-
-  if (!http.begin(client, url)) {
-    Serial.println("OTA HTTP setup FAILED.");
-    return false;
-  }
-
-  // GitHub Raw/CDN may redirect. Follow GET redirects.
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setRedirectLimit(5);
-  http.setTimeout(30000);
-  http.useHTTP10(true);
-  http.setUserAgent("PyGit-NodeMCU");
-  http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
-  http.addHeader("Pragma", "no-cache");
-
-  int httpCode = http.GET();
-
-  Serial.print("Firmware HTTP Code: ");
-  Serial.println(httpCode);
-
-  if (httpCode != HTTP_CODE_OK) {
-    Serial.print("Firmware download FAILED: ");
-    Serial.println(http.errorToString(httpCode));
-    Serial.print("HTTP error code: ");
-    Serial.println(httpCode);
-    http.end();
-    return false;
-  }
-
-  int contentLength = http.getSize();
-
-  Serial.print("Firmware size: ");
-  Serial.print(contentLength);
-  Serial.println(" bytes");
-
-  if (contentLength <= 0) {
-    Serial.println("OTA FAILED: Server did not provide a valid firmware size.");
-    http.end();
-    return false;
-  }
-
-  WiFiClient* stream = http.getStreamPtr();
-
-  if (!stream) {
-    Serial.println("OTA FAILED: Firmware stream is unavailable.");
-    http.end();
-    return false;
-  }
-
-  // Start writing the downloaded binary directly to the OTA partition.
-  if (!Update.begin((size_t)contentLength, U_FLASH)) {
-    Serial.print("OTA FAILED: Update.begin(): ");
-    Serial.println(Update.getErrorString());
-    http.end();
-    return false;
-  }
-
-  Serial.println("Downloading firmware to flash...");
-
-  size_t written = Update.writeStream(*stream);
-
-  Serial.print("Written: ");
-  Serial.print(written);
-  Serial.print("/");
-  Serial.println(contentLength);
-
-  if (written != (size_t)contentLength) {
-    Serial.print("OTA FAILED: Incomplete firmware download. Update error: ");
-    Serial.println(Update.getErrorString());
-    Update.end();
-    http.end();
-    return false;
-  }
-
-  if (!Update.end()) {
-    Serial.print("OTA FAILED: Update.end(): ");
-    Serial.println(Update.getErrorString());
-    http.end();
-    return false;
-  }
-
-  http.end();
-
-  if (!Update.isFinished()) {
-    Serial.println("OTA FAILED: Update is not marked as finished.");
-    return false;
-  }
-
-  Serial.println("OTA update successful!");
-  Serial.println("Restarting into new firmware...");
-  delay(1000);
-  ESP.restart();
 
   return true;
 }
 
-void checkForFirmwareUpdate(const String& remoteConfig) {
-  String remoteVersion = readGeneralFirmwareVersion(remoteConfig);
-
-  if (remoteVersion.length() == 0) {
-    Serial.println("Firmware version not found in config.json.");
-    return;
-  }
-
-  Serial.println();
-  Serial.println("==============================");
-  Serial.println("FIRMWARE VERSION CHECK");
-  Serial.println("==============================");
-  Serial.print("Local firmware:  ");
-  Serial.println(LOCAL_FIRMWARE_VERSION);
-  Serial.print("GitHub general:  ");
-  Serial.println(remoteVersion);
-
-  int versionComparison = compareFirmwareVersions(
-    remoteVersion,
-    String(LOCAL_FIRMWARE_VERSION)
-  );
-
-  if (versionComparison == 0) {
-    Serial.println("Firmware is up to date.");
-    Serial.println("==============================");
-    return;
-  }
-
-  // Never downgrade automatically.
-  if (versionComparison < 0) {
-    Serial.println("GitHub firmware is older than local firmware.");
-    Serial.println("No OTA update will be performed.");
-    Serial.println("==============================");
-    return;
-  }
-
-  Serial.println("Newer firmware detected!");
-  Serial.println("Starting OTA update...");
-  Serial.println("==============================");
-
-  performFirmwareOTA();
-}
 void checkDeviceConfiguration(const String& remoteConfig) {
   String deviceMAC = WiFi.macAddress();
   String deviceObject = readDeviceObject(remoteConfig, deviceMAC);
@@ -466,6 +323,7 @@ void checkDeviceConfiguration(const String& remoteConfig) {
 
   if (LittleFS.exists(DEVICE_CONFIG_FILE)) {
     File f = LittleFS.open(DEVICE_CONFIG_FILE, "r");
+
     if (f) {
       localConfigVersion = readDeviceConfigVersion(f.readString());
       f.close();
@@ -501,9 +359,11 @@ void checkGitHubConfig() {
 
   WiFiClientSecure client;
   client.setInsecure();
+
   HTTPClient http;
 
   String url = String(configURL) + "&pygit=" + String(millis());
+
   Serial.print("Config URL: ");
   Serial.println(url);
 
@@ -513,18 +373,20 @@ void checkGitHubConfig() {
   }
 
   http.setTimeout(15000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(5);
   http.addHeader("Accept", "application/vnd.github.raw+json");
   http.addHeader("Cache-Control", "no-cache, no-store, max-age=0");
   http.addHeader("Pragma", "no-cache");
   http.addHeader("User-Agent", "PyGit-NodeMCU");
 
   int httpCode = http.GET();
+
   Serial.print("HTTP Code: ");
   Serial.println(httpCode);
 
   if (httpCode != HTTP_CODE_OK) {
     Serial.println("GitHub config download FAILED.");
-    Serial.println(http.getString());
     http.end();
     return;
   }
@@ -534,13 +396,10 @@ void checkGitHubConfig() {
 
   Serial.println("config.json downloaded.");
 
-  // IMPORTANT:
-  // devices[MAC].version is only the device configuration version.
-  // It NEVER triggers a firmware OTA.
   checkDeviceConfiguration(payload);
 
-  // Only general_version.ino controls firmware OTA.
-  checkForFirmwareUpdate(payload);
+  // Code update is deliberately separate from device configuration.
+  checkPyGitCodeUpdate();
 }
 
 void setup() {
@@ -577,9 +436,8 @@ void setup() {
   }
 
   Serial.println();
-  Serial.print("PyGit Firmware ");
-  Serial.println(LOCAL_FIRMWARE_VERSION);
-  Serial.println("Base firmware online.");
+  Serial.println("PyGit default code online.");
+  Serial.println("Code updates are checked from GitHub.");
 
   checkGitHubConfig();
   lastUpdateCheck = millis();
@@ -599,6 +457,7 @@ void loop() {
 
       Serial.println();
       Serial.println("WiFi disconnected. Reconnecting...");
+
       WiFi.disconnect();
       WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
 
