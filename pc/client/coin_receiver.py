@@ -1,6 +1,9 @@
 import socket
 import threading
 import tkinter as tk
+import time
+import json
+import os
 from tkinter import ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -64,7 +67,7 @@ def discover_nodemcu(local_ip):
         try:
             sock.connect((ip, NODEMCU_PORT))
             sock.settimeout(1.5)
-            request = f"REQUEST|{self.pc_name}|{local_ip}|{PC_PORT}\n"
+            request = f"REQUEST|{PC_NAME}|{local_ip}|{PC_PORT}\n"
             sock.sendall(request.encode("utf-8"))
             response = sock.recv(256).decode("utf-8", errors="ignore").strip()
 
