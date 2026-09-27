@@ -28,11 +28,11 @@ INSERT_COIN_MINUTES = 1
 APP_VERSION = "1.4.8"
 GITHUB_BASE = "https://raw.githubusercontent.com/royalguard14/PyGit/main/pc/client/"
 CONTROL_URL = GITHUB_BASE + "control.json"
-APP_DIR = os.path.join(os.environ.get("PROGRAMFILES", r"C:\\Program Files"), "PisoNetClient")
+APP_DIR = os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "PisoNetClient")
 APP_EXE = os.path.join(APP_DIR, "PisoNet.exe")
 LOCAL_CONTROL = os.path.join(APP_DIR, "control.json")
 LOG_FILE = os.path.join(APP_DIR, "setup.log")
-STARTUP_DIR = os.path.join(os.environ.get("PROGRAMDATA", r"C:\\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+STARTUP_DIR = os.path.join(os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
 STARTUP_LINK = os.path.join(STARTUP_DIR, "PisoNet.lnk")
 FIREWALL_RULE = "PisoNet TCP 5000"
 
@@ -40,7 +40,7 @@ def setup_log(message):
     try:
         os.makedirs(APP_DIR, exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\\n")
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
     except Exception:
         pass
 
@@ -83,7 +83,7 @@ def save_local_control(control):
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(control, f, indent=2)
-            f.write("\\n")
+            f.write("\n")
         os.replace(path, LOCAL_CONTROL)
     finally:
         if os.path.exists(path):
@@ -145,9 +145,9 @@ def request_self_update(remote):
             f.write('for /l %%i in (1,1,30) do (tasklist /fi "PID eq %PID%" | findstr /r /c:" %PID% " >nul || goto stopped) & timeout /t 1 /nobreak >nul\\n')
             f.write(":stopped\\n")
             f.write("copy /y %NEW% %TARGET% >nul\\n")
-            f.write("start "" %TARGET%\\n")
+            f.write('start "" %TARGET%\n')
             f.write("del /q %NEW% >nul 2>&1\\n")
-            f.write("del /q "%~f0" >nul 2>&1\\n")
+            f.write('del /q "%~f0" >nul 2>&1\n')
         subprocess.Popen(["cmd", "/c", script_path], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         setup_log("New version downloaded; restarting.")
         return True
