@@ -1,7 +1,6 @@
 VERSION = "0.1.0"
 
 # Development build: keep keyboard hooks disabled so Ctrl+C can stop Python.
-# Set to False only when we are ready for the production kiosk build.
 DEV_MODE = True
 
 # NOTE: Tkinter does not support CSS directly. The INSERT COIN button is
@@ -259,13 +258,14 @@ def add_minutes(minutes):
 
 
 def countdown_loop():
+    global remaining_seconds
     while not shutdown_event.is_set():
         time.sleep(1)
         with timer_lock:
             before = remaining_seconds
             if remaining_seconds > 0:
-                globals()["remaining_seconds"] -= 1
-            after = globals()["remaining_seconds"]
+                remaining_seconds -= 1
+            after = remaining_seconds
         if before > 0 and after == 0:
             enter_expired_state()
         if root:
@@ -363,8 +363,13 @@ def refresh_ui():
     if not root or not canvas: return
     with timer_lock:
         seconds = remaining_seconds
+    # Hide timer completely whenever there is no paid time.
     for item in timer_items:
-        canvas.itemconfig(item, text=format_time(seconds), fill="#ff3333" if 0 < seconds <= 10 else "#00ff66")
+        canvas.itemconfig(
+            item,
+            text=format_time(seconds) if seconds > 0 else "",
+            fill="#ff3333" if 0 < seconds <= 10 else "#00ff66"
+        )
     if seconds <= 0:
         enter_insert_overlay()
         mute_audio()
@@ -424,7 +429,7 @@ def build_ui():
     background_item = canvas.create_image(w//2, h//2, image="", anchor="center", tags="background")
     update_background()
     pc_items = [stroked_text(w/2, 45, pc_name, ("Arial", 28, "bold"))]
-    timer_items = [stroked_text(w-35, 45, "00:00:00", ("Arial", 34, "bold"), fill="#00ff66", anchor="ne")]
+    timer_items = [stroked_text(w-35, 45, "", ("Arial", 34, "bold"), fill="#00ff66", anchor="ne")]
     shop_items = [stroked_text(w/2, h/2-105, shop_name.upper(), ("Arial", 54, "bold")), stroked_text(w/2, h/2-48, operation_text, ("Arial", 20, "bold"))]
     status_items = [stroked_text(w/2, h/2+5, "INSERT COIN", ("Arial", 24, "bold"))]
     coin_button = tk.Button(root, text="INSERT COIN", command=insert_coin, font=("Arial", 24, "bold"), padx=60, pady=18, bg="#16a34a", fg="white", activebackground="#15803d", activeforeground="white", disabledforeground="white", relief="flat", bd=0, highlightthickness=0, cursor="hand2")
@@ -443,8 +448,7 @@ def exit_kiosk():
     except Exception: pass
     unlock_keyboard()
     unmute_audio()
-    if root:
-        root.destroy()
+    if root: root.destroy()
 
 
 def main():
