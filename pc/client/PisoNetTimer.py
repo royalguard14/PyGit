@@ -189,11 +189,20 @@ def initialize_installation():
                 return False
 
     os.makedirs(APP_DIR, exist_ok=True)
+    configure_firewall()
+    configure_startup()
+    return True
+
+
+def check_for_updates_background():
     try:
         remote = json.loads(fetch_setup_bytes(CONTROL_URL).decode("utf-8"))
     except Exception as exc:
         setup_log("GitHub check failed: " + str(exc))
-        remote = None
+        return
+
+    if not remote or "version" not in remote:
+        return
 
     local = None
     try:
@@ -202,16 +211,22 @@ def initialize_installation():
     except Exception:
         pass
 
-    if remote and "version" in remote:
-        remote_version = version_tuple(remote["version"])
-        local_version = version_tuple(local.get("version", APP_VERSION)) if local else version_tuple(APP_VERSION)
-        if remote_version > local_version and request_self_update(remote):
-            return False
-        save_local_control(remote)
+    remote_version = version_tuple(remote["version"])
+    local_version = version_tuple(local.get("version", APP_VERSION)) if local else version_tuple(APP_VERSION)
 
-    configure_firewall()
-    configure_startup()
-    return True
+    if remote_version > local_version:
+        setup_log(
+            f"New version detected: {remote['version']} "
+            f"(local {local_version}). Downloading in background."
+        )
+        if request_self_update(remote):
+            return
+        return
+
+    try:
+        save_local_control(remote)
+    except Exception as exc:
+        setup_log("Saving control.json failed: " + str(exc))
 
 # ================= SINGLE INSTANCE =================
 _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -773,10 +788,21 @@ if not initialize_installation():
 threading.Thread(target=server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
 
+# Show the kiosk first. GitHub/update checks run in the background
+# so startup is not blocked and the desktop is not exposed.
 build_main_ui()
 refresh_ui()
 
 if root:
     root.after(SLIDE_INTERVAL * 1000, next_background)
+
+    # Let the kiosk render first, then check GitHub without blocking Tk.
+    root.after(
+        500,
+        lambda: threading.Thread(
+            target=check_for_updates_background,
+            daemon=True
+        ).start()
+    )
 
 root.mainloop()
