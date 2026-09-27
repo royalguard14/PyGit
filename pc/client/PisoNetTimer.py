@@ -1,4 +1,4 @@
-VERSION = "1.4.9"
+VERSION = "1.4.10"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests, shutil, subprocess, tempfile, urllib.request
@@ -20,12 +20,12 @@ DETAIL_JSON = os.path.join(IMAGE_FOLDER, "detail.json")
 SLIDE_INTERVAL = 5
 IP_BASE = 100
 MAX_PC = 10
-GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxrlmAv0Sr7KWMIgLVi4RoA8CnLv7WxHUfgzfoF0IYVmzacJaIe7OBPrxn0zCXtYCp/exec"
+GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxrlAv0Sr7KWMIgLVi4RoA8CnLv7WxHUfgzfoF0IYVmzacJaIe7OBPrxn0zCXtYCp/exec"
 TIMEZONE = pytz.timezone("Asia/Manila")
 INSERT_COIN_MINUTES = 1
 
 # ================= INSTALL / SELF UPDATE =================
-APP_VERSION = "1.4.9"
+APP_VERSION = "1.4.10"
 GITHUB_BASE = "https://raw.githubusercontent.com/royalguard14/PyGit/main/pc/client/"
 CONTROL_URL = GITHUB_BASE + "control.json"
 APP_DIR = os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "PisoNetClient")
@@ -193,7 +193,6 @@ def initialize_installation():
     configure_startup()
     return True
 
-
 def check_for_updates_background():
     try:
         remote = json.loads(fetch_setup_bytes(CONTROL_URL).decode("utf-8"))
@@ -220,9 +219,6 @@ def check_for_updates_background():
             f"(local {local_version}). Downloading in background."
         )
         if request_self_update(remote):
-            # Keep the kiosk visible during the download. Once the updater
-            # is ready, close this process so the helper can replace the EXE
-            # and launch the new version.
             if root:
                 root.after(0, exit_kiosk)
             return
@@ -276,7 +272,6 @@ def load_detail_config():
             text = str(value).strip()
             hour, minute = map(int, text.split(":"))
 
-            # Accept 24:00 as midnight/end-of-day.
             if hour == 24 and minute == 0:
                 return 24 * 60
 
@@ -328,12 +323,9 @@ def get_shop_status():
         return "TAMPERED", now
 
     current = now.hour * 60 + now.minute
-
-    # 24:00 means midnight at the end of the day.
     normalized_open = open_minutes % (24 * 60)
     normalized_close = close_minutes % (24 * 60)
 
-    # Same start/end means 24-hour operation.
     if open_minutes == close_minutes:
         return "OPEN", now
 
@@ -342,7 +334,6 @@ def get_shop_status():
     elif open_minutes < close_minutes:
         is_open = normalized_open <= current < normalized_close
     else:
-        # Overnight schedule, e.g. 20:00 -> 04:00.
         is_open = current >= normalized_open or current < normalized_close
 
     return ("OPEN" if is_open else "CLOSED"), now
@@ -488,6 +479,8 @@ def countdown():
 
 # ================= NETWORK SERVER =================
 def handle_client(conn, addr):
+    global remaining_seconds
+
     try:
         data = conn.recv(1024).decode(errors="ignore").strip()
         match = re.fullmatch(
@@ -607,6 +600,38 @@ def next_background():
 
     root.after(SLIDE_INTERVAL * 1000, next_background)
 
+# ================= TEXT STROKE =================
+def create_stroked_text(x, y, text, font, fill="white", stroke="black",
+                        stroke_width=2, anchor="center", tags="ui"):
+    # Tkinter Canvas text has no native outline/stroke option.
+    # Draw several black copies around the white text to create a readable stroke.
+    offsets = [
+        (-stroke_width, -stroke_width), (0, -stroke_width), (stroke_width, -stroke_width),
+        (-stroke_width, 0),                                    (stroke_width, 0),
+        (-stroke_width, stroke_width),  (0, stroke_width),  (stroke_width, stroke_width),
+    ]
+
+    for dx, dy in offsets:
+        canvas.create_text(
+            x + dx,
+            y + dy,
+            text=text,
+            fill=stroke,
+            font=font,
+            anchor=anchor,
+            tags=tags
+        )
+
+    return canvas.create_text(
+        x,
+        y,
+        text=text,
+        fill=fill,
+        font=font,
+        anchor=anchor,
+        tags=tags
+    )
+
 def build_main_ui():
     global root, canvas, timer_text, status_text, background_item
 
@@ -625,8 +650,6 @@ def build_main_ui():
     )
     canvas.pack(fill="both", expand=True)
 
-    # This must be an IMAGE item, not a rectangle.
-    # A rectangle does not support the Canvas -image option.
     background_item = canvas.create_image(
         root.winfo_screenwidth() // 2,
         root.winfo_screenheight() // 2,
@@ -637,59 +660,45 @@ def build_main_ui():
 
     update_background()
 
-    canvas.create_text(
-        18,
-        18,
-        text=f"v{VERSION}",
-        fill="white",
-        font=("Arial", 18, "bold"),
-        anchor="nw",
-        tags="ui"
+    create_stroked_text(
+        18, 18, f"v{VERSION}",
+        ("Arial", 18, "bold"),
+        anchor="nw"
     )
 
-    canvas.create_text(
+    create_stroked_text(
         root.winfo_screenwidth() // 2,
         75,
-        text=shop_name.upper(),
-        fill="white",
-        font=("Arial", 42, "bold"),
-        tags="ui"
+        shop_name.upper(),
+        ("Arial", 42, "bold")
     )
 
-    canvas.create_text(
+    create_stroked_text(
         root.winfo_screenwidth() // 2,
         125,
-        text=PC_NAME,
-        fill="white",
-        font=("Arial", 22),
-        tags="ui"
+        PC_NAME,
+        ("Arial", 22)
     )
 
-    canvas.create_text(
+    create_stroked_text(
         root.winfo_screenwidth() // 2,
         175,
-        text=operation_text,
-        fill="white",
-        font=("Arial", 20, "bold"),
-        tags="ui"
+        operation_text,
+        ("Arial", 20, "bold")
     )
 
-    timer_text = canvas.create_text(
+    timer_text = create_stroked_text(
         root.winfo_screenwidth() // 2,
         root.winfo_screenheight() // 2 - 40,
-        text="00:00:00",
-        fill="white",
-        font=("Arial", 90, "bold"),
-        tags="ui"
+        "00:00:00",
+        ("Arial", 90, "bold")
     )
 
-    status_text = canvas.create_text(
+    status_text = create_stroked_text(
         root.winfo_screenwidth() // 2,
         root.winfo_screenheight() // 2 + 70,
-        text="",
-        fill="white",
-        font=("Arial", 24),
-        tags="ui"
+        "",
+        ("Arial", 24)
     )
 
     if dev_btn:
@@ -785,7 +794,6 @@ def exit_kiosk():
     if root:
         root.destroy()
 
-
 # ================= START =================
 if not initialize_installation():
     sys.exit(0)
@@ -793,15 +801,11 @@ if not initialize_installation():
 threading.Thread(target=server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
 
-# Show the kiosk first. GitHub/update checks run in the background
-# so startup is not blocked and the desktop is not exposed.
 build_main_ui()
 refresh_ui()
 
 if root:
     root.after(SLIDE_INTERVAL * 1000, next_background)
-
-    # Let the kiosk render first, then check GitHub without blocking Tk.
     root.after(
         500,
         lambda: threading.Thread(
