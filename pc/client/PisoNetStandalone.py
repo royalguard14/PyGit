@@ -1,5 +1,9 @@
 VERSION = "0.1.0"
 
+# Development build: keep keyboard hooks disabled so Ctrl+C can stop Python.
+# Set to False only when we are ready for the production kiosk build.
+DEV_MODE = True
+
 # NOTE: Tkinter does not support CSS directly. The INSERT COIN button is
 # styled with a CSS-like visual theme using native Tkinter properties.
 import json
@@ -289,14 +293,14 @@ def unmute_audio():
 
 
 def lock_keyboard():
-    if not keyboard: return
+    if DEV_MODE or not keyboard: return
     for key in BLOCK_KEYS:
         try: keyboard.block_key(key)
         except Exception: pass
 
 
 def unlock_keyboard():
-    if not keyboard: return
+    if DEV_MODE or not keyboard: return
     for key in BLOCK_KEYS:
         try: keyboard.unblock_key(key)
         except Exception: pass
@@ -423,27 +427,8 @@ def build_ui():
     timer_items = [stroked_text(w-35, 45, "00:00:00", ("Arial", 34, "bold"), fill="#00ff66", anchor="ne")]
     shop_items = [stroked_text(w/2, h/2-105, shop_name.upper(), ("Arial", 54, "bold")), stroked_text(w/2, h/2-48, operation_text, ("Arial", 20, "bold"))]
     status_items = [stroked_text(w/2, h/2+5, "INSERT COIN", ("Arial", 24, "bold"))]
-
-    # CSS-like modern green pill-style button.
-    coin_button = tk.Button(
-        root,
-        text="INSERT COIN",
-        command=insert_coin,
-        font=("Arial", 24, "bold"),
-        padx=60,
-        pady=18,
-        bg="#16a34a",
-        fg="white",
-        activebackground="#15803d",
-        activeforeground="white",
-        disabledforeground="white",
-        relief="flat",
-        bd=0,
-        highlightthickness=0,
-        cursor="hand2"
-    )
+    coin_button = tk.Button(root, text="INSERT COIN", command=insert_coin, font=("Arial", 24, "bold"), padx=60, pady=18, bg="#16a34a", fg="white", activebackground="#15803d", activeforeground="white", disabledforeground="white", relief="flat", bd=0, highlightthickness=0, cursor="hand2")
     canvas.create_window(w/2, h/2+150, window=coin_button, tags="ui")
-
     maintenance_button = tk.Button(root, text="MAINTENANCE +5 MIN", command=maintenance_add_time, font=("Arial", 13, "bold"), padx=14, pady=7, bg="white", fg="black", relief="raised", bd=3, cursor="hand2")
     canvas.create_window(w-130, h-40, window=maintenance_button, tags="ui")
     root.bind("<Alt-F4>", lambda event: "break")
@@ -458,7 +443,8 @@ def exit_kiosk():
     except Exception: pass
     unlock_keyboard()
     unmute_audio()
-    if root: root.destroy()
+    if root:
+        root.destroy()
 
 
 def main():
