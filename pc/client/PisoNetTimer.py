@@ -1,7 +1,7 @@
 VERSION = "1.4.8"
 
 # ================= IMPORTS =================
-import socket, sys, threading, re, tkinter as tk, time, os, json, requests
+import socket, sys, threading, re, tkinter as tk, time, os, json, requests, shutil, subprocess, tempfile, urllib.request
 from PIL import Image, ImageTk, ImageOps
 import keyboard
 import ctypes
@@ -23,6 +23,170 @@ MAX_PC = 10
 GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxrlmAv0Sr7KWMIgLVi4RoA8CnLv7WxHUfgzfoF0IYVmzacJaIe7OBPrxn0zCXtYCp/exec"
 TIMEZONE = pytz.timezone("Asia/Manila")
 INSERT_COIN_MINUTES = 1
+
+# ================= INSTALL / SELF UPDATE =================
+APP_VERSION = "1.4.8"
+GITHUB_BASE = "https://raw.githubusercontent.com/royalguard14/PyGit/main/pc/client/"
+CONTROL_URL = GITHUB_BASE + "control.json"
+APP_DIR = os.path.join(os.environ.get("PROGRAMFILES", r"C:\\Program Files"), "PisoNetClient")
+APP_EXE = os.path.join(APP_DIR, "PisoNet.exe")
+LOCAL_CONTROL = os.path.join(APP_DIR, "control.json")
+LOG_FILE = os.path.join(APP_DIR, "setup.log")
+STARTUP_DIR = os.path.join(os.environ.get("PROGRAMDATA", r"C:\\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+STARTUP_LINK = os.path.join(STARTUP_DIR, "PisoNet.lnk")
+FIREWALL_RULE = "PisoNet TCP 5000"
+
+def setup_log(message):
+    try:
+        os.makedirs(APP_DIR, exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\\n")
+    except Exception:
+        pass
+
+def setup_admin():
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+def relaunch_admin():
+    if setup_admin():
+        return False
+    executable = sys.executable
+    args = " ".join(f'"{a}"' for a in sys.argv[1:])
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", executable, args, os.path.dirname(os.path.abspath(sys.argv[0])), 1
+    )
+    if result <= 32:
+        raise PermissionError("Administrator privileges are required.")
+    return True
+
+def fetch_setup_bytes(url):
+    request = urllib.request.Request(
+        url + ("&" if "?" in url else "?") + "_=" + os.urandom(8).hex(),
+        headers={"User-Agent": "PisoNet", "Cache-Control": "no-cache", "Pragma": "no-cache"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read()
+
+def version_tuple(value):
+    try:
+        return tuple(int(x) for x in str(value).split("."))
+    except Exception:
+        return (0,)
+
+def save_local_control(control):
+    os.makedirs(APP_DIR, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix=".control.", suffix=".json", dir=APP_DIR, text=True)
+    os.close(fd)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(control, f, indent=2)
+            f.write("\\n")
+        os.replace(path, LOCAL_CONTROL)
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+def configure_firewall():
+    subprocess.run(
+        ["netsh", "advfirewall", "firewall", "add", "rule",
+         "name=" + FIREWALL_RULE, "dir=in", "action=allow",
+         "protocol=TCP", "localport=5000", "profile=any", "enable=yes"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+    )
+
+def configure_startup():
+    os.makedirs(STARTUP_DIR, exist_ok=True)
+    ps = (
+        '$ws=New-Object -ComObject WScript.Shell;'
+        f'$s=$ws.CreateShortcut("{STARTUP_LINK}");'
+        f'$s.TargetPath="{APP_EXE}";'
+        f'$s.WorkingDirectory="{APP_DIR}";'
+        '$s.WindowStyle=7;$s.Save()'
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+    )
+
+def install_self():
+    if not getattr(sys, "frozen", False):
+        return True
+    current = os.path.normcase(os.path.abspath(sys.executable))
+    target = os.path.normcase(os.path.abspath(APP_EXE))
+    if current == target:
+        return True
+    os.makedirs(APP_DIR, exist_ok=True)
+    shutil.copy2(current, APP_EXE)
+    setup_log("Installed PisoNet.exe to Program Files.")
+    subprocess.Popen([APP_EXE], cwd=APP_DIR, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return False
+
+def request_self_update(remote):
+    if not getattr(sys, "frozen", False):
+        return False
+    url = remote.get("download", GITHUB_BASE + "PisoNet.exe")
+    fd, new_path = tempfile.mkstemp(prefix=".PisoNet.new.", suffix=".exe", dir=APP_DIR)
+    os.close(fd)
+    try:
+        with open(new_path, "wb") as f:
+            f.write(fetch_setup_bytes(url))
+        script_fd, script_path = tempfile.mkstemp(prefix=".PisoNet.update.", suffix=".cmd", dir=APP_DIR, text=True)
+        os.close(script_fd)
+        current_pid = os.getpid()
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write("@echo off\\n")
+            f.write("setlocal\\n")
+            f.write(f"set PID={current_pid}\\n")
+            f.write(f'set NEW="{new_path}"\\n')
+            f.write(f'set TARGET="{APP_EXE}"\\n')
+            f.write('for /l %%i in (1,1,30) do (tasklist /fi "PID eq %PID%" | findstr /r /c:" %PID% " >nul || goto stopped) & timeout /t 1 /nobreak >nul\\n')
+            f.write(":stopped\\n")
+            f.write("copy /y %NEW% %TARGET% >nul\\n")
+            f.write("start "" %TARGET%\\n")
+            f.write("del /q %NEW% >nul 2>&1\\n")
+            f.write("del /q "%~f0" >nul 2>&1\\n")
+        subprocess.Popen(["cmd", "/c", script_path], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        setup_log("New version downloaded; restarting.")
+        return True
+    except Exception as exc:
+        setup_log("Update failed: " + str(exc))
+        if os.path.exists(new_path):
+            os.remove(new_path)
+        return False
+
+def initialize_installation():
+    if relaunch_admin():
+        return False
+    if not install_self():
+        return False
+
+    os.makedirs(APP_DIR, exist_ok=True)
+    try:
+        remote = json.loads(fetch_setup_bytes(CONTROL_URL).decode("utf-8"))
+    except Exception as exc:
+        setup_log("GitHub check failed: " + str(exc))
+        remote = None
+
+    local = None
+    try:
+        with open(LOCAL_CONTROL, "r", encoding="utf-8") as f:
+            local = json.load(f)
+    except Exception:
+        pass
+
+    if remote and "version" in remote:
+        remote_version = version_tuple(remote["version"])
+        local_version = version_tuple(local.get("version", APP_VERSION)) if local else version_tuple(APP_VERSION)
+        if remote_version > local_version and request_self_update(remote):
+            return False
+        save_local_control(remote)
+
+    configure_firewall()
+    configure_startup()
+    return True
 
 # ================= SINGLE INSTANCE =================
 _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -496,27 +660,27 @@ def build_main_ui():
             tags="ui"
         )
 
-        maintenance_button = tk.Button(
-            root,
-            text="MAINTENANCE / EXIT",
-            command=exit_kiosk,
-            font=("Arial", 16, "bold"),
-            padx=18,
-            pady=8,
-            bg="white",
-            fg="black",
-            activebackground="lightgray",
-            relief="raised",
-            bd=3,
-            cursor="hand2"
-        )
+    maintenance_button = tk.Button(
+        root,
+        text="MAINTENANCE / EXIT",
+        command=exit_kiosk,
+        font=("Arial", 16, "bold"),
+        padx=18,
+        pady=8,
+        bg="white",
+        fg="black",
+        activebackground="lightgray",
+        relief="raised",
+        bd=3,
+        cursor="hand2"
+    )
 
-        canvas.create_window(
-            root.winfo_screenwidth() - 130,
-            root.winfo_screenheight() - 45,
-            window=maintenance_button,
-            tags="ui"
-        )
+    canvas.create_window(
+        root.winfo_screenwidth() - 130,
+        root.winfo_screenheight() - 45,
+        window=maintenance_button,
+        tags="ui"
+    )
 
     root.config(cursor="arrow")
     root.bind("<Alt-F4>", lambda event: "break")
@@ -568,6 +732,9 @@ def exit_kiosk():
 
 
 # ================= START =================
+if not initialize_installation():
+    sys.exit(0)
+
 threading.Thread(target=server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
 
