@@ -511,58 +511,16 @@ def maintenance_add_time():
 
 
 def enter_insert_overlay():
+    # No black center panel.
+    #
+    # The background image remains fully visible. The existing INSERT COIN
+    # button and status text are used as the expired screen instead.
     global insert_overlay
-
-    if insert_overlay is not None:
-        return
-
-    w = root.winfo_screenwidth()
-    h = root.winfo_screenheight()
-
-    # Dark translucent-looking panel. Tkinter does not provide true per-widget
-    # alpha reliably, so use a solid dark panel for readability.
-    insert_overlay = canvas.create_rectangle(
-        w * 0.22, h * 0.22,
-        w * 0.78, h * 0.78,
-        fill="#111111",
-        outline="white",
-        width=2,
-        tags="expired_overlay"
-    )
-
-    stroked_text(
-        w / 2, h * 0.36,
-        shop_name.upper(),
-        ("Arial", 48, "bold"),
-        tags="expired_overlay"
-    )
-
-    stroked_text(
-        w / 2, h * 0.50,
-        pc_name,
-        ("Arial", 26, "bold"),
-        tags="expired_overlay"
-    )
-
-    stroked_text(
-        w / 2, h * 0.62,
-        "INSERT COIN",
-        ("Arial", 42, "bold"),
-        fill="#00ff66",
-        tags="expired_overlay"
-    )
-
-    # Put the real button above the overlay.
-    canvas.tag_raise(coin_button)
+    insert_overlay = None
 
 
 def leave_insert_overlay():
     global insert_overlay
-
-    if insert_overlay is None:
-        return
-
-    canvas.delete("expired_overlay")
     insert_overlay = None
 
 
