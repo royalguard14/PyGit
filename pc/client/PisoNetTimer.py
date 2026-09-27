@@ -220,6 +220,11 @@ def check_for_updates_background():
             f"(local {local_version}). Downloading in background."
         )
         if request_self_update(remote):
+            # Keep the kiosk visible during the download. Once the updater
+            # is ready, close this process so the helper can replace the EXE
+            # and launch the new version.
+            if root:
+                root.after(0, exit_kiosk)
             return
         return
 
