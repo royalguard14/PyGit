@@ -1,4 +1,4 @@
-VERSION = "1.4.7"
+VERSION = "1.4.8"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
@@ -496,6 +496,28 @@ def build_main_ui():
             tags="ui"
         )
 
+        maintenance_button = tk.Button(
+            root,
+            text="MAINTENANCE / EXIT",
+            command=exit_kiosk,
+            font=("Arial", 16, "bold"),
+            padx=18,
+            pady=8,
+            bg="white",
+            fg="black",
+            activebackground="lightgray",
+            relief="raised",
+            bd=3,
+            cursor="hand2"
+        )
+
+        canvas.create_window(
+            root.winfo_screenwidth() - 130,
+            root.winfo_screenheight() - 45,
+            window=maintenance_button,
+            tags="ui"
+        )
+
     root.config(cursor="arrow")
     root.bind("<Alt-F4>", lambda event: "break")
     root.bind("<Escape>", lambda event: "break")
@@ -529,6 +551,21 @@ def refresh_ui():
         canvas.itemconfig(status_text, text=message)
 
     root.after(1000, refresh_ui)
+
+def exit_kiosk():
+    try:
+        unlock_input()
+    except Exception:
+        pass
+
+    try:
+        unmute()
+    except Exception:
+        pass
+
+    if root:
+        root.destroy()
+
 
 # ================= START =================
 threading.Thread(target=server, daemon=True).start()
