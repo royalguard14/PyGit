@@ -4,12 +4,25 @@ import tkinter as tk
 from tkinter import ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-PC_NAME = "PC1"
+DETAIL_JSON = r"C:\sufyan\detail.json"
+PC_NAME = os.environ.get("COMPUTERNAME", "PC1")
 PC_PORT = 5000
 NODEMCU_PORT = 5001
 TIME_PER_PULSE = 10  # minutes
 DISCOVERY_TIMEOUT = 0.35
 DISCOVERY_WORKERS = 32
+
+
+def load_pc_name():
+    try:
+        with open(DETAIL_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        value = data.get("PcName") or data.get("pc_name") or data.get("PC_NAME")
+        if value:
+            return str(value).strip()
+    except (OSError, ValueError, TypeError):
+        pass
+    return PC_NAME
 
 
 def get_local_ip():
@@ -51,7 +64,7 @@ def discover_nodemcu(local_ip):
         try:
             sock.connect((ip, NODEMCU_PORT))
             sock.settimeout(1.5)
-            request = f"REQUEST|{PC_NAME}|{local_ip}|{PC_PORT}\n"
+            request = f"REQUEST|{self.pc_name}|{local_ip}|{PC_PORT}\n"
             sock.sendall(request.encode("utf-8"))
             response = sock.recv(256).decode("utf-8", errors="ignore").strip()
 
@@ -89,6 +102,7 @@ class CoinReceiver:
         self.coins = 0
         self.total_time = 0
         self.local_ip = get_local_ip()
+        self.pc_name = load_pc_name()
         self.nodemcu_ip = None
 
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -102,12 +116,13 @@ class CoinReceiver:
 
         self.node_socket = None
         self.node_lock = threading.Lock()
+        self.control_running = False
 
         frame = ttk.Frame(root, padding=25)
         frame.pack(fill="both", expand=True)
 
         ttk.Label(frame, text="PyGit Coin Receiver", font=("Segoe UI", 18, "bold")).pack(pady=(0, 12))
-        ttk.Label(frame, text=f"PC: {PC_NAME}    IP: {self.local_ip}:{PC_PORT}", font=("Segoe UI", 9)).pack(pady=(0, 8))
+        ttk.Label(frame, text=f"PC: {self.pc_name}    IP: {self.local_ip}:{PC_PORT}", font=("Segoe UI", 9)).pack(pady=(0, 8))
 
         self.status = ttk.Label(frame, text="Status: NOT RECEIVING", font=("Segoe UI", 11))
         self.status.pack(pady=5)
@@ -149,12 +164,29 @@ class CoinReceiver:
         sock.close()
         return False, response or "REJECT|UNKNOWN"
 
+    def control_heartbeat(self):
+        while self.control_running:
+            with self.node_lock:
+                sock = self.node_socket
+            if not sock:
+                break
+            try:
+                sock.sendall(b"PING\n")
+            except OSError:
+                break
+            time.sleep(3)
+        if self.control_running:
+            self.control_running = False
+            self.receiving = False
+            self.root.after(0, lambda: self.receive_button.config(text="RECEIVE COINS", state="normal"))
+            self.set_status("Status: NODEMCU CONNECTION LOST")
+
     def release_from_nodemcu(self):
         with self.node_lock:
             sock = self.node_socket
         if not sock: return
         try:
-            sock.sendall(f"RELEASE|{PC_NAME}\n".encode("utf-8"))
+            sock.sendall(f"RELEASE|{self.pc_name}\n".encode("utf-8"))
             sock.settimeout(2)
             sock.recv(128)
         except OSError:
@@ -183,6 +215,8 @@ class CoinReceiver:
         if accepted:
             self.receiving = True
             self.requesting = False
+            self.control_running = True
+            threading.Thread(target=self.control_heartbeat, daemon=True).start()
             self.root.after(0, lambda: self.receive_button.config(text="STOP RECEIVING", state="normal"))
             self.set_status(f"Status: RECEIVING COINS ({self.nodemcu_ip})")
             return
@@ -228,7 +262,14 @@ class CoinReceiver:
                     line = line.strip()
                     if not line: continue
                     if line == "PYGIT READY":
-                        self.set_status("Status: NODEMCU CONNECTED")
+                        self.receiving = True
+                        self.set_status("Status: NODEMCU READY - INSERT COIN")
+                        self.root.after(0, lambda: self.receive_button.config(text="STOP RECEIVING", state="normal"))
+                        continue
+                    if line.startswith("COIN_IDLE|"):
+                        self.receiving = False
+                        self.set_status("Status: COIN WINDOW CLOSED")
+                        self.root.after(0, lambda: self.receive_button.config(text="RECEIVE COINS", state="normal"))
                         continue
                     if line.startswith("COIN:"):
                         try: minutes = int(line.split(":", 1)[1])
