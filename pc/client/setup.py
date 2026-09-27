@@ -234,7 +234,10 @@ def save_control(control):
 
 
 def install_updater_copy():
-    current = os.path.abspath(sys.executable if getattr(sys, "frozen", False) else sys.argv[0])
+    if not getattr(sys, "frozen", False):
+        return
+
+    current = os.path.abspath(sys.executable)
     current = os.path.normcase(current)
     target = os.path.normcase(os.path.abspath(UPDATER_EXE))
 
