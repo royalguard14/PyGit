@@ -2,6 +2,10 @@
 setlocal
 cd /d "%~dp0"
 
+set "OUTDIR=%~dp0pc\client\standalone"
+
+if not exist "%OUTDIR%" mkdir "%OUTDIR%"
+
 echo ==========================================
 echo   BUILD STANDALONE PISONET TEST EXE
 echo ==========================================
@@ -16,7 +20,9 @@ python -m PyInstaller ^
  --hidden-import=pycaw ^
  --hidden-import=comtypes ^
  --hidden-import=PIL ^
- --distpath "%~dp0pc\client" ^
+ --distpath "%OUTDIR%" ^
+ --workpath "%~dp0build\PisoNetStandalone" ^
+ --specpath "%~dp0build\PisoNetStandalone" ^
  "%~dp0pc\client\PisoNetStandalone.py"
 
 if errorlevel 1 (
@@ -26,7 +32,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "%~dp0pc\client\PisoNetStandalone.exe" (
+if not exist "%OUTDIR%\PisoNetStandalone.exe" (
     echo.
     echo EXE WAS NOT CREATED.
     pause
@@ -35,6 +41,6 @@ if not exist "%~dp0pc\client\PisoNetStandalone.exe" (
 
 echo.
 echo BUILD SUCCESSFUL:
-echo %~dp0pc\client\PisoNetStandalone.exe
+echo %OUTDIR%\PisoNetStandalone.exe
 echo.
 pause
