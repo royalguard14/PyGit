@@ -774,8 +774,12 @@ void loop() {
 
   if (activeClient && digitalRead(TRIGGER_PIN) == HIGH &&
       lastCoinActivity > 0 && millis() - lastCoinActivity >= COIN_IDLE_TIMEOUT_MS) {
+    if (receiverClient && receiverClient.connected()) {
+      receiverClient.println("COIN_IDLE|10");
+    }
+
     digitalWrite(TRIGGER_PIN, LOW);
-    Serial.println("10 seconds without coins. Coinslot OFF (GPIO14 LOW).");
+    Serial.println("10 seconds without coins. Sent COIN_IDLE|10. Coinslot OFF (GPIO14 LOW).");
   }
 
   if (millis() - lastCheck >= CHECK_INTERVAL) {
