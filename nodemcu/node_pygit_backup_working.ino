@@ -10,8 +10,8 @@ const char* DEVICE_CONFIG_FILE = "/device_config.json";
 const char* CONFIG_URL = "https://api.github.com/repos/royalguard14/PyGit/contents/nodemcu/data/config.json?ref=main";
 
 const uint8_t FLASH_BUTTON = 0;
-const uint8_t COIN_PIN = 12;
-const uint8_t TRIGGER_PIN = 14;
+const uint8_t COIN_PIN = 12;               // D6 / GPIO12 - coinslot
+const uint8_t TRIGGER_PIN = 14;            // D5 / GPIO14 - coinslot ON/OFF control
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
 const unsigned long COIN_DEBOUNCE_MS = 100;
@@ -19,18 +19,13 @@ const unsigned long COIN_IDLE_TIMEOUT_MS = 10000;
 
 const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
-const unsigned long DEFAULT_TIME_PER_PULSE = 10;
-
-const unsigned long CONTROL_GRACE_MS = 10000;
-const unsigned long CONTROL_HEARTBEAT_MS = 3000;
+const unsigned long DEFAULT_TIME_PER_PULSE = 10;  // minutes
 
 unsigned long lastCheck = 0;
 volatile unsigned long lastCoinInterrupt = 0;
 volatile bool coinPulseDetected = false;
-unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
+unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE; // minutes
 unsigned long lastCoinActivity = 0;
-unsigned long lastControlHeartbeat = 0;
-unsigned long controlLostSince = 0;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
@@ -50,7 +45,7 @@ IPAddress activePcIP;
 uint16_t activePcPort = DEFAULT_PC_PORT;
 
 String jsonValue(const String& json, const String& key) {
-  String token = """ + key + """;
+  String token = "\"" + key + "\"";
   int p = json.indexOf(token);
   if (p < 0) return "";
 
@@ -87,11 +82,11 @@ String jsonValue(const String& json, const String& key) {
     value += c;
   }
 
-  return value;
+  return "";
 }
 
 String deviceObject(const String& json, const String& mac) {
-  int p = json.indexOf(""" + mac + """);
+  int p = json.indexOf("\"" + mac + "\"");
   if (p < 0) return "";
   int start = json.indexOf('{', p);
   if (start < 0) return "";
@@ -482,8 +477,6 @@ void clearActiveClient(const char* reason) {
 
   activeClient = false;
   lastCoinActivity = 0;
-  lastControlHeartbeat = 0;
-  controlLostSince = 0;
   digitalWrite(TRIGGER_PIN, LOW);
   activePcName = "";
   activePcIP = IPAddress(0, 0, 0, 0);
@@ -576,8 +569,6 @@ void processRequest(const String& line, WiFiClient& client) {
 
   activeClient = true;
   lastCoinActivity = millis();
-  lastControlHeartbeat = millis();
-  controlLostSince = 0;
   digitalWrite(TRIGGER_PIN, HIGH);
   activePcName = pcName;
   activePcIP = pcIP;
@@ -608,26 +599,11 @@ void processRequest(const String& line, WiFiClient& client) {
 void handleControlServer() {
   if (activeClient) {
     if (!controlClient || !controlClient.connected()) {
-      if (controlLostSince == 0) {
-        controlLostSince = millis();
-        Serial.println("Control connection appears lost. Waiting for heartbeat/reconnect...");
-      } else if (millis() - controlLostSince >= CONTROL_GRACE_MS) {
-        clearActiveClient("Control connection lost");
-        return;
-      }
+      clearActiveClient("Control connection lost");
     } else {
-      controlLostSince = 0;
-
       while (controlClient.available()) {
-        String line = controlClient.readStringUntil('
-');
+        String line = controlClient.readStringUntil('\n');
         line.trim();
-
-        if (line == "PING") {
-          controlClient.println("PONG");
-          lastControlHeartbeat = millis();
-          continue;
-        }
 
         if (line.startsWith("RELEASE|")) {
           String pcName = line.substring(8);
@@ -640,20 +616,16 @@ void handleControlServer() {
           }
         }
       }
-
-      if (millis() - lastControlHeartbeat >= CONTROL_HEARTBEAT_MS * 2) {
-        controlClient.println("PONG");
-        lastControlHeartbeat = millis();
-      }
     }
 
+    // Accept new requests while another PC is active so discovery
+    // can identify this NodeMCU and receive REJECTED|ACTIVE.
     WiFiClient newClient = controlServer.available();
     if (newClient) {
       newClient.setTimeout(2);
       newClient.setNoDelay(true);
 
-      String line = newClient.readStringUntil('
-');
+      String line = newClient.readStringUntil('\n');
       line.trim();
 
       if (line.length()) {
@@ -672,8 +644,7 @@ void handleControlServer() {
   newClient.setTimeout(2);
   newClient.setNoDelay(true);
 
-  String line = newClient.readStringUntil('
-');
+  String line = newClient.readStringUntil('\n');
   line.trim();
 
   if (!line.length()) {
@@ -721,12 +692,10 @@ void handleCoinPulse() {
   Serial.println("Coinslot ON (GPIO14 HIGH). Timer reset to 10 seconds.");
 
   if (!receiverClient || !receiverClient.connected()) {
-    if (!connectToPCReceiver()) {
-      Serial.println("Active PC receiver disconnected. Releasing client.");
-      clearActiveClient("PC receiver connection lost");
-      Serial.println("------------------------------");
-      return;
-    }
+    Serial.println("Active PC receiver disconnected. Releasing client.");
+    clearActiveClient("PC receiver connection lost");
+    Serial.println("------------------------------");
+    return;
   }
 
   receiverClient.print("COIN:");
@@ -805,12 +774,8 @@ void loop() {
 
   if (activeClient && digitalRead(TRIGGER_PIN) == HIGH &&
       lastCoinActivity > 0 && millis() - lastCoinActivity >= COIN_IDLE_TIMEOUT_MS) {
-    if (receiverClient && receiverClient.connected()) {
-      receiverClient.println("COIN_IDLE|10");
-    }
-
     digitalWrite(TRIGGER_PIN, LOW);
-    Serial.println("10 seconds without coins. Sent COIN_IDLE|10. Coinslot OFF (GPIO14 LOW).");
+    Serial.println("10 seconds without coins. Coinslot OFF (GPIO14 LOW).");
   }
 
   if (millis() - lastCheck >= CHECK_INTERVAL) {
