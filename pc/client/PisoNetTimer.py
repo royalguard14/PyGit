@@ -111,6 +111,20 @@ def configure_startup():
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
     )
 
+def cleanup_legacy_installations():
+    for name in ["PisoNetClient.exe", "PisoNetSetup.exe"]:
+        subprocess.run(
+            ["taskkill", "/IM", name, "/F"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+        )
+    for name in ["PisoNetClient.lnk"]:
+        path = os.path.join(STARTUP_DIR, name)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+
 def install_self():
     if not getattr(sys, "frozen", False):
         return True
@@ -119,6 +133,7 @@ def install_self():
     if current == target:
         return True
     os.makedirs(APP_DIR, exist_ok=True)
+    cleanup_legacy_installations()
     shutil.copy2(current, APP_EXE)
     setup_log("Installed PisoNet.exe to Program Files.")
     subprocess.Popen([APP_EXE], cwd=APP_DIR, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
