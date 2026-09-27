@@ -148,7 +148,12 @@ def request_self_update(remote):
             f.write('start "" %TARGET%\n')
             f.write("del /q %NEW% >nul 2>&1\n")
             f.write('del /q "%~f0" >nul 2>&1\n')
-        subprocess.Popen(["cmd", "/c", script_path], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", "cmd.exe", f'/c "{script_path}"',
+            APP_DIR, 0
+        )
+        if result <= 32:
+            raise PermissionError("Administrator privileges are required for update.")
         setup_log("New version downloaded; restarting.")
         return True
     except Exception as exc:
@@ -158,10 +163,15 @@ def request_self_update(remote):
         return False
 
 def initialize_installation():
-    if relaunch_admin():
-        return False
-    if not install_self():
-        return False
+    if getattr(sys, "frozen", False):
+        current = os.path.normcase(os.path.abspath(sys.executable))
+        target = os.path.normcase(os.path.abspath(APP_EXE))
+
+        if current != target:
+            if relaunch_admin():
+                return False
+            if not install_self():
+                return False
 
     os.makedirs(APP_DIR, exist_ok=True)
     try:
