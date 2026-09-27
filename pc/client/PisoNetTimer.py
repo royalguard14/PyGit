@@ -1,4 +1,4 @@
-VERSION = "1.4.8"
+VERSION = "1.4.9"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests, shutil, subprocess, tempfile, urllib.request
@@ -25,7 +25,7 @@ TIMEZONE = pytz.timezone("Asia/Manila")
 INSERT_COIN_MINUTES = 1
 
 # ================= INSTALL / SELF UPDATE =================
-APP_VERSION = "1.4.8"
+APP_VERSION = "1.4.9"
 GITHUB_BASE = "https://raw.githubusercontent.com/royalguard14/PyGit/main/pc/client/"
 CONTROL_URL = GITHUB_BASE + "control.json"
 APP_DIR = os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "PisoNetClient")
@@ -616,6 +616,16 @@ def build_main_ui():
     )
 
     update_background()
+
+    canvas.create_text(
+        18,
+        18,
+        text=f"v{VERSION}",
+        fill="white",
+        font=("Arial", 18, "bold"),
+        anchor="nw",
+        tags="ui"
+    )
 
     canvas.create_text(
         root.winfo_screenwidth() // 2,
