@@ -15,7 +15,6 @@ const uint8_t TRIGGER_PIN = 14;
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
 const unsigned long COIN_DEBOUNCE_MS = 100;
-const unsigned long COIN_IDLE_TIMEOUT_MS = 10000;
 
 const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
@@ -28,7 +27,6 @@ unsigned long lastCheck = 0;
 volatile unsigned long lastCoinInterrupt = 0;
 volatile bool coinPulseDetected = false;
 unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
-unsigned long lastCoinActivity = 0;
 unsigned long lastControlHeartbeat = 0;
 unsigned long controlLostSince = 0;
 
@@ -481,7 +479,6 @@ void clearActiveClient(const char* reason) {
   if (controlClient) controlClient.stop();
 
   activeClient = false;
-  lastCoinActivity = 0;
   lastControlHeartbeat = 0;
   controlLostSince = 0;
   digitalWrite(TRIGGER_PIN, LOW);
@@ -575,7 +572,6 @@ void processRequest(const String& line, WiFiClient& client) {
   }
 
   activeClient = true;
-  lastCoinActivity = millis();
   lastControlHeartbeat = millis();
   controlLostSince = 0;
   digitalWrite(TRIGGER_PIN, HIGH);
@@ -713,9 +709,8 @@ void handleCoinPulse() {
   }
 
   digitalWrite(TRIGGER_PIN, HIGH);
-  lastCoinActivity = millis();
 
-  Serial.println("Coinslot ON (GPIO14 HIGH). Timer reset to 10 seconds.");
+  Serial.println("Coinslot ON (GPIO14 HIGH). Coin accepted.");
 
   if (!receiverClient || !receiverClient.connected()) {
     if (!connectToPCReceiver()) {
@@ -800,15 +795,6 @@ void loop() {
   handleControlServer();
   handleCoinPulse();
 
-  if (activeClient && digitalRead(TRIGGER_PIN) == HIGH &&
-      lastCoinActivity > 0 && millis() - lastCoinActivity >= COIN_IDLE_TIMEOUT_MS) {
-    if (receiverClient && receiverClient.connected()) {
-      receiverClient.println("COIN_IDLE|10");
-    }
-
-    digitalWrite(TRIGGER_PIN, LOW);
-    Serial.println("10 seconds without coins. Sent COIN_IDLE|10. Coinslot OFF (GPIO14 LOW).");
-  }
 
   if (millis() - lastCheck >= CHECK_INTERVAL) {
     lastCheck = millis();
