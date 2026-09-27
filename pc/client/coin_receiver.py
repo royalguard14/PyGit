@@ -104,6 +104,9 @@ class CoinReceiver:
         self.requesting = False
         self.coins = 0
         self.total_time = 0
+        self.coin_window_seconds = 10
+        self.coin_window_remaining = 0
+        self.coin_window_running = False
         self.local_ip = get_local_ip()
         self.pc_name = load_pc_name()
         self.nodemcu_ip = None
@@ -135,6 +138,9 @@ class CoinReceiver:
 
         self.time_label = ttk.Label(frame, text="Added Time: 0 minutes", font=("Segoe UI", 12))
         self.time_label.pack(pady=5)
+
+        self.countdown_label = ttk.Label(frame, text="Coin window: --", font=("Segoe UI", 14, "bold"))
+        self.countdown_label.pack(pady=8)
 
         self.receive_button = ttk.Button(frame, text="RECEIVE COINS", command=self.toggle_receiving)
         self.receive_button.pack(pady=20, ipadx=20, ipady=8)
@@ -203,6 +209,7 @@ class CoinReceiver:
     def toggle_receiving(self):
         if self.receiving:
             self.receiving = False
+            self.stop_coin_window()
             self.release_from_nodemcu()
             self.receive_button.config(text="RECEIVE COINS")
             self.set_status("Status: NOT RECEIVING")
@@ -266,13 +273,9 @@ class CoinReceiver:
                     if not line: continue
                     if line == "PYGIT READY":
                         self.receiving = True
+                        self.start_coin_window()
                         self.set_status("Status: NODEMCU READY - INSERT COIN")
                         self.root.after(0, lambda: self.receive_button.config(text="STOP RECEIVING", state="normal"))
-                        continue
-                    if line.startswith("COIN_IDLE|"):
-                        self.receiving = False
-                        self.set_status("Status: COIN WINDOW CLOSED")
-                        self.root.after(0, lambda: self.receive_button.config(text="RECEIVE COINS", state="normal"))
                         continue
                     if line.startswith("COIN:"):
                         try: minutes = int(line.split(":", 1)[1])
@@ -287,6 +290,40 @@ class CoinReceiver:
             try: client.close()
             except OSError: pass
 
+    def start_coin_window(self):
+        self.coin_window_running = True
+        self.coin_window_remaining = self.coin_window_seconds
+        self.root.after(0, self.update_coin_window)
+
+    def reset_coin_window(self):
+        if self.receiving:
+            self.coin_window_running = True
+            self.coin_window_remaining = self.coin_window_seconds
+            self.root.after(0, self.update_coin_window)
+
+    def stop_coin_window(self):
+        self.coin_window_running = False
+        self.coin_window_remaining = 0
+        self.root.after(0, lambda: self.countdown_label.config(text="Coin window: --"))
+
+    def update_coin_window(self):
+        if not self.coin_window_running:
+            return
+        if not self.receiving:
+            self.stop_coin_window()
+            return
+        self.countdown_label.config(text=f"Coin window: 00:{self.coin_window_remaining:02d}")
+        if self.coin_window_remaining <= 0:
+            self.coin_window_running = False
+            self.receiving = False
+            self.set_status("Status: COIN WINDOW EXPIRED - RELEASING")
+            self.receive_button.config(text="RECEIVE COINS", state="normal")
+            threading.Thread(target=self.release_from_nodemcu, daemon=True).start()
+            self.root.after(1500, self.restore_idle_status)
+            return
+        self.coin_window_remaining -= 1
+        self.root.after(1000, self.update_coin_window)
+
     def receive_coin(self, minutes=None):
         if not self.receiving:
             self.set_status("Status: NOT RECEIVING (coin ignored)")
@@ -296,13 +333,16 @@ class CoinReceiver:
 
         self.coins += 1
         self.total_time += minutes
+        self.reset_coin_window()
         self.root.after(0, lambda: self.coins_label.config(text=f"Received Coins: {self.coins}"))
         self.root.after(0, lambda: self.time_label.config(text=f"Added Time: {self.total_time} minutes"))
         self.set_status(f"Status: COIN RECEIVED (+{minutes} min)")
         self.root.after(1500, lambda: self.status.config(text="Status: RECEIVING COINS") if self.receiving else None)
 
     def close(self):
-        if self.receiving: self.release_from_nodemcu()
+        if self.receiving:
+            self.stop_coin_window()
+            self.release_from_nodemcu()
         try: self.server_socket.close()
         except OSError: pass
         self.root.destroy()
