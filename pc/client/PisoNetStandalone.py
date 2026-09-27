@@ -166,6 +166,98 @@ def discover_nodemcu(local_ip):
     return None, None
 
 
+def start_pc_receiver():
+    """Listen for NodeMCU connections on TCP port 5000."""
+    def server_loop():
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind(("0.0.0.0", PC_PORT))
+            server.listen(5)
+            server.settimeout(1.0)
+            print(f"[PISONET] PC receiver listening on TCP {PC_PORT}")
+        except OSError as exc:
+            print(f"[PISONET] Cannot start PC receiver on port {PC_PORT}: {exc}")
+            server.close()
+            return
+
+        while not shutdown_event.is_set():
+            try:
+                client, address = server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+            threading.Thread(
+                target=handle_pc_receiver,
+                args=(client, address),
+                daemon=True,
+            ).start()
+
+        server.close()
+
+    threading.Thread(target=server_loop, daemon=True).start()
+
+
+def handle_pc_receiver(sock, address):
+    """Handle NodeMCU messages on TCP port 5000."""
+    global receiving
+    buffer = ""
+    print(f"[PISONET] NodeMCU receiver connected from {address[0]}:{address[1]}")
+
+    try:
+        sock.settimeout(1.0)
+        while not shutdown_event.is_set():
+            try:
+                data = sock.recv(1024)
+            except socket.timeout:
+                continue
+
+            if not data:
+                break
+
+            buffer += data.decode("utf-8", errors="ignore")
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line == "PYGIT READY":
+                    print("[PISONET] PYGIT READY received.")
+                elif line.startswith("COIN:"):
+                    try:
+                        minutes = int(line.split(":", 1)[1])
+                    except ValueError:
+                        print(f"[PISONET] Invalid coin message: {line}")
+                        continue
+
+                    if minutes > 0 and receiving:
+                        add_minutes(minutes)
+                        print(f"[PISONET] COIN received: +{minutes} minute(s)")
+                        try:
+                            sock.sendall(b"COIN_RECEIVED\n")
+                        except OSError:
+                            pass
+                elif line.startswith("COIN_IDLE|"):
+                    receiving = False
+                    print(f"[PISONET] {line} - coin window ended.")
+                    if root:
+                        root.after(0, update_coin_button)
+
+    except OSError as exc:
+        print(f"[PISONET] Receiver connection ended: {exc}")
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+        if root:
+            root.after(0, update_coin_button)
+
+
 def request_node_receiving():
     global receiving, requesting, node_socket, nodemcu_ip
     local_ip = get_local_ip()
@@ -584,6 +676,7 @@ def main():
     load_detail_config()
     load_images()
     build_ui()
+    start_pc_receiver()
 
     threading.Thread(target=countdown_loop, daemon=True).start()
 
