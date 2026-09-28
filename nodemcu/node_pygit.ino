@@ -65,7 +65,6 @@ String jsonValue(const String& json, const String& key) {
 
   for (int i = a; i < (int)json.length(); i++) {
     char c = json[i];
-
     if (escaped) {
       if (c == '"' || c == 92 || c == '/') value += c;
       else if (c == 'n') value += '\n';
@@ -75,16 +74,13 @@ String jsonValue(const String& json, const String& key) {
       escaped = false;
       continue;
     }
-
     if (c == '\\') {
       escaped = true;
       continue;
     }
-
     if (c == '"') return value;
     value += c;
   }
-
   return value;
 }
 
@@ -113,10 +109,7 @@ String deviceObject(const String& json, const String& mac) {
 
 void saveDeviceConfig(const String& object) {
   File f = LittleFS.open(DEVICE_CONFIG_FILE, "w");
-  if (!f) {
-    Serial.println("WARNING: Cannot save device configuration.");
-    return;
-  }
+  if (!f) return;
   f.print(object);
   f.close();
 }
@@ -129,79 +122,25 @@ void applyDeviceConfig(const String& object) {
   }
 }
 
-void showDeviceConfig(const String& object) {
-  Serial.println();
-  Serial.println("------------------------------");
-  Serial.println("DEVICE CONFIGURATION");
-  Serial.println("------------------------------");
-  Serial.print("Config version: "); Serial.println(jsonValue(object, "version"));
-  Serial.print("Shop name: "); Serial.println(jsonValue(object, "shop_name"));
-  Serial.print("Google Sheet: "); Serial.println(jsonValue(object, "google_sheet"));
-  Serial.print("Time input/pulse: "); Serial.print(jsonValue(object, "time_input_per_pulse")); Serial.println(" minutes");
-  Serial.println("------------------------------");
-}
-
 void loadLocalDeviceConfig() {
   if (!LittleFS.exists(DEVICE_CONFIG_FILE)) return;
-
   File f = LittleFS.open(DEVICE_CONFIG_FILE, "r");
   if (!f) return;
-
   String object = f.readString();
   f.close();
   applyDeviceConfig(object);
 }
 
-void printLittleFSFiles() {
-  Serial.println();
-  Serial.println("------------------------------");
-  Serial.println("LITTLEFS FILE CHECK");
-  Serial.println("------------------------------");
-
-  const char* files[] = {
-    "/wifi_config.json",
-    "/device_config.json",
-    "/config.json"
-  };
-
-  for (uint8_t i = 0; i < 3; i++) {
-    Serial.print(files[i]);
-    Serial.print(": ");
-    Serial.println(LittleFS.exists(files[i]) ? "FOUND" : "NOT FOUND");
-  }
-
-  Dir dir = LittleFS.openDir("/");
-  bool anyFile = false;
-  while (dir.next()) {
-    anyFile = true;
-    Serial.print("FILE: ");
-    Serial.println(dir.fileName());
-  }
-
-  if (!anyFile) Serial.println("No files found in LittleFS root.");
-  Serial.println("------------------------------");
-}
-
 bool loadWiFiConfig() {
-  printLittleFSFiles();
-
   String configPath = WIFI_CONFIG;
 
   if (!LittleFS.exists(configPath)) {
-    if (LittleFS.exists("/data/wifi_config.json")) {
-      configPath = "/data/wifi_config.json";
-      Serial.println("Using Wi-Fi config from /data/wifi_config.json");
-    } else {
-      return false;
-    }
+    if (LittleFS.exists("/data/wifi_config.json")) configPath = "/data/wifi_config.json";
+    else return false;
   }
 
   File f = LittleFS.open(configPath, "r");
-  if (!f) {
-    Serial.print("Cannot open Wi-Fi config: ");
-    Serial.println(configPath);
-    return false;
-  }
+  if (!f) return false;
 
   String json = f.readString();
   f.close();
@@ -209,17 +148,7 @@ bool loadWiFiConfig() {
   wifiSSID = jsonValue(json, "ssid");
   wifiPassword = jsonValue(json, "password");
 
-  Serial.print("Wi-Fi config found: ");
-  Serial.println(configPath);
-  Serial.print("SSID loaded: ");
-  Serial.println(wifiSSID.length() ? wifiSSID : "(EMPTY)");
-
-  if (!wifiSSID.length()) {
-    Serial.println("Wi-Fi config exists but SSID is empty.");
-    return false;
-  }
-
-  return true;
+  return wifiSSID.length() > 0;
 }
 
 bool saveWiFiConfig(const String& ssid, const String& password) {
@@ -244,22 +173,14 @@ void handleCaptivePortal() {
 void startWiFiSetup() {
   WiFi.disconnect();
   delay(100);
-
   WiFi.mode(WIFI_AP);
+
   String ap = "PyGit-" + WiFi.macAddress();
   ap.replace(":", "");
 
   WiFi.softAPConfig(apIP, apGateway, apSubnet);
   WiFi.softAP(ap.c_str());
   dnsServer.start(DNS_PORT, "*", apIP);
-
-  Serial.println("\n==============================");
-  Serial.println("Wi-Fi Setup Mode");
-  Serial.println("==============================");
-  Serial.print("Setup SSID: "); Serial.println(ap);
-  Serial.print("Setup IP: http://"); Serial.println(apIP);
-  Serial.println("Captive portal: ENABLED");
-  Serial.println("Connect to the setup SSID; the portal should open automatically.");
 
   server.on("/", HTTP_GET, []() {
     server.send(200, "text/html",
@@ -299,14 +220,12 @@ void startWiFiSetup() {
       server.send(400, "text/plain", "SSID is required.");
       return;
     }
-
     if (!saveWiFiConfig(ssid, password)) {
       server.send(500, "text/plain", "Could not save WiFi configuration.");
       return;
     }
 
-    server.send(200, "text/html",
-      "<h2>Saved.</h2><p>Wi-Fi credentials saved. Restarting NodeMCU...</p>");
+    server.send(200, "text/html", "<h2>Saved.</h2><p>Wi-Fi credentials saved. Restarting NodeMCU...</p>");
     delay(1000);
     ESP.restart();
   });
@@ -323,16 +242,11 @@ void startWiFiSetup() {
 
 bool flashPressedAtStartup() {
   pinMode(FLASH_BUTTON, INPUT_PULLUP);
-
-  Serial.println("Press FLASH within 5 seconds for Wi-Fi setup...");
-
   unsigned long started = millis();
   while (millis() - started < WIFI_SETUP_WINDOW) {
     if (digitalRead(FLASH_BUTTON) == LOW) return true;
     delay(10);
   }
-
-  Serial.println("No Wi-Fi setup requested.");
   return false;
 }
 
@@ -340,37 +254,13 @@ bool connectWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
 
-  Serial.print("Connecting to WiFi");
-
-  for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println();
-
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  Serial.println("WiFi connected!");
-  Serial.print("IP: "); Serial.println(WiFi.localIP());
-  Serial.print("Device MAC: "); Serial.println(WiFi.macAddress());
-
-  return true;
+  for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) delay(500);
+  return WiFi.status() == WL_CONNECTED;
 }
 
 void checkDeviceConfig(const String& remote) {
-  String mac = WiFi.macAddress();
-  String remoteObject = deviceObject(remote, mac);
-
-  Serial.println("\n==============================");
-  Serial.println("DEVICE CONFIG CHECK");
-  Serial.println("==============================");
-  Serial.print("MAC: "); Serial.println(mac);
-
-  if (!remoteObject.length()) {
-    Serial.println("Device NOT found in config.json!");
-    return;
-  }
+  String remoteObject = deviceObject(remote, WiFi.macAddress());
+  if (!remoteObject.length()) return;
 
   String remoteVersion = jsonValue(remoteObject, "version");
   String localVersion;
@@ -383,31 +273,16 @@ void checkDeviceConfig(const String& remote) {
     }
   }
 
-  Serial.print("Local config:  ");
-  Serial.println(localVersion.length() ? localVersion : "(none)");
-  Serial.print("GitHub config: ");
-  Serial.println(remoteVersion);
-
   if (localVersion != remoteVersion) {
-    Serial.println("New device configuration detected.");
     saveDeviceConfig(remoteObject);
     applyDeviceConfig(remoteObject);
-    showDeviceConfig(remoteObject);
   } else {
     applyDeviceConfig(remoteObject);
-    Serial.println("Device configuration is up to date.");
   }
-
-  Serial.print("Active time per pulse: ");
-  Serial.print(timeInputPerPulse);
-  Serial.println(" minutes");
-  Serial.println("==============================");
 }
 
 void checkGitHubConfig() {
   if (WiFi.status() != WL_CONNECTED) return;
-
-  Serial.println("\nChecking GitHub config.json...");
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -415,12 +290,7 @@ void checkGitHubConfig() {
   HTTPClient http;
   String url = String(CONFIG_URL) + "&pygit=" + String(millis());
 
-  Serial.print("Config URL: "); Serial.println(url);
-
-  if (!http.begin(client, url)) {
-    Serial.println("HTTP connection setup FAILED.");
-    return;
-  }
+  if (!http.begin(client, url)) return;
 
   http.setTimeout(15000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
@@ -431,21 +301,13 @@ void checkGitHubConfig() {
   http.addHeader("User-Agent", "PyGit-NodeMCU");
 
   int code = http.GET();
-
-  Serial.print("HTTP Code: ");
-  Serial.println(code);
-
-  if (code != HTTP_CODE_OK) {
-    Serial.println("GitHub config download FAILED.");
+  if (code == HTTP_CODE_OK) {
+    String remote = http.getString();
     http.end();
+    checkDeviceConfig(remote);
     return;
   }
-
-  String remote = http.getString();
   http.end();
-
-  Serial.println("config.json downloaded.");
-  checkDeviceConfig(remote);
 }
 
 void ICACHE_RAM_ATTR coinInterrupt() {
@@ -459,22 +321,10 @@ void ICACHE_RAM_ATTR coinInterrupt() {
 void startCoinServer() {
   controlServer.begin();
   controlServer.setNoDelay(true);
-
-  Serial.print("Control server: TCP port ");
-  Serial.println(CONTROL_PORT);
 }
 
 void clearActiveClient(const char* reason) {
-  if (activeClient) {
-    Serial.println();
-    Serial.println("------------------------------");
-    Serial.print("RELEASING ACTIVE CLIENT: ");
-    Serial.println(activePcName);
-    Serial.print("Reason: ");
-    Serial.println(reason);
-    Serial.println("------------------------------");
-  }
-
+  (void)reason;
   if (receiverClient) receiverClient.stop();
   if (controlClient) controlClient.stop();
 
@@ -492,20 +342,9 @@ bool connectToPCReceiver() {
   if (receiverClient && receiverClient.connected()) return true;
   if (receiverClient) receiverClient.stop();
 
-  Serial.print("Connecting to PC receiver: ");
-  Serial.print(activePcIP);
-  Serial.print(":");
-  Serial.println(activePcPort);
-
-  if (!receiverClient.connect(activePcIP, activePcPort)) {
-    Serial.println("PC receiver connection FAILED.");
-    return false;
-  }
-
+  if (!receiverClient.connect(activePcIP, activePcPort)) return false;
   receiverClient.setNoDelay(true);
   receiverClient.println("PYGIT READY");
-
-  Serial.println("PC receiver connected.");
   return true;
 }
 
@@ -513,7 +352,6 @@ void processRequest(const String& line, WiFiClient& client) {
   int p1 = line.indexOf('|');
   int p2 = line.indexOf('|', p1 + 1);
   int p3 = line.indexOf('|', p2 + 1);
-
   if (p1 < 0 || p2 < 0 || p3 < 0) {
     client.println("ERROR|INVALID REQUEST");
     return;
@@ -543,18 +381,9 @@ void processRequest(const String& line, WiFiClient& client) {
   uint16_t pcPort = pcPortText.toInt();
   if (pcPort == 0) pcPort = DEFAULT_PC_PORT;
 
-  Serial.println();
-  Serial.println("==============================");
-  Serial.println("CLIENT REQUEST");
-  Serial.println("==============================");
-  Serial.print("PC Name: "); Serial.println(pcName);
-  Serial.print("IP: "); Serial.println(pcIP);
-  Serial.print("Port: "); Serial.println(pcPort);
-
   if (activeClient) {
     if (activePcName == pcName && activePcIP == pcIP && activePcPort == pcPort) {
       client.println("ACCEPTED|" + activePcName);
-      Serial.println("Same active client requested again.");
       return;
     }
 
@@ -564,10 +393,6 @@ void processRequest(const String& line, WiFiClient& client) {
     client.print(activePcIP);
     client.print("|");
     client.println(activePcPort);
-
-    Serial.print("REQUEST REJECTED. Active client: ");
-    Serial.println(activePcName);
-    Serial.println("==============================");
     return;
   }
 
@@ -582,52 +407,36 @@ void processRequest(const String& line, WiFiClient& client) {
   if (!connectToPCReceiver()) {
     client.println("REJECTED|PC_UNREACHABLE");
     clearActiveClient("PC receiver unreachable");
-    Serial.println("==============================");
     return;
   }
 
   controlClient = client;
   controlClient.setNoDelay(true);
-
   client.print("ACCEPTED|");
   client.println(activePcName);
-
-  Serial.println("REQUEST ACCEPTED.");
-  Serial.println("ACTIVE CLIENT:");
-  Serial.print("PC Name: "); Serial.println(activePcName);
-  Serial.print("IP: "); Serial.println(activePcIP);
-  Serial.print("Port: "); Serial.println(activePcPort);
-  Serial.println("Status: ACTIVE");
-  Serial.println("==============================");
 }
 
 void handleControlServer() {
   if (activeClient) {
     if (!controlClient || !controlClient.connected()) {
-      if (controlLostSince == 0) {
-        controlLostSince = millis();
-        Serial.println("Control connection appears lost. Waiting for heartbeat/reconnect...");
-      } else if (millis() - controlLostSince >= CONTROL_GRACE_MS) {
+      if (controlLostSince == 0) controlLostSince = millis();
+      else if (millis() - controlLostSince >= CONTROL_GRACE_MS) {
         clearActiveClient("Control connection lost");
         return;
       }
     } else {
       controlLostSince = 0;
-
       while (controlClient.available()) {
         String line = controlClient.readStringUntil('\n');
         line.trim();
-
         if (line == "PING") {
           controlClient.println("PONG");
           lastControlHeartbeat = millis();
           continue;
         }
-
         if (line.startsWith("RELEASE|")) {
           String pcName = line.substring(8);
           pcName.trim();
-
           if (pcName == activePcName) {
             controlClient.println("RELEASED|" + activePcName);
             clearActiveClient("Client requested release");
@@ -635,7 +444,6 @@ void handleControlServer() {
           }
         }
       }
-
       if (millis() - lastControlHeartbeat >= CONTROL_HEARTBEAT_MS * 2) {
         controlClient.println("PONG");
         lastControlHeartbeat = millis();
@@ -646,17 +454,11 @@ void handleControlServer() {
     if (newClient) {
       newClient.setTimeout(2);
       newClient.setNoDelay(true);
-
       String line = newClient.readStringUntil('\n');
       line.trim();
-
-      if (line.length()) {
-        processRequest(line, newClient);
-      }
-
+      if (line.length()) processRequest(line, newClient);
       newClient.stop();
     }
-
     return;
   }
 
@@ -665,17 +467,14 @@ void handleControlServer() {
 
   newClient.setTimeout(2);
   newClient.setNoDelay(true);
-
   String line = newClient.readStringUntil('\n');
   line.trim();
-
   if (!line.length()) {
     newClient.stop();
     return;
   }
 
   processRequest(line, newClient);
-
   if (!activeClient) {
     delay(10);
     newClient.stop();
@@ -684,7 +483,6 @@ void handleControlServer() {
 
 void handleCoinPulse() {
   bool pulse = false;
-
   noInterrupts();
   if (coinPulseDetected) {
     coinPulseDetected = false;
@@ -692,97 +490,39 @@ void handleCoinPulse() {
   }
   interrupts();
 
-  if (!pulse) return;
-
-  Serial.println();
-  Serial.println("------------------------------");
-  Serial.println("COIN PULSE DETECTED");
-  Serial.println("Pulse width assumption: 50 ms");
-  Serial.print("Time input per pulse: ");
-  Serial.print(timeInputPerPulse);
-  Serial.println(" minutes");
-
-  if (!activeClient) {
-    Serial.println("No active PC. Coin ignored.");
-    Serial.println("------------------------------");
-    return;
-  }
+  if (!pulse || !activeClient) return;
 
   digitalWrite(TRIGGER_PIN, HIGH);
 
-  Serial.println("Coinslot ON (GPIO14 HIGH). Coin accepted.");
-
   if (!receiverClient || !receiverClient.connected()) {
     if (!connectToPCReceiver()) {
-      Serial.println("Active PC receiver disconnected. Releasing client.");
       clearActiveClient("PC receiver connection lost");
-      Serial.println("------------------------------");
       return;
     }
   }
 
   receiverClient.print("COIN:");
   receiverClient.println(timeInputPerPulse);
-
-  Serial.print("Coin value sent to ");
-  Serial.println(activePcName);
-  Serial.println("------------------------------");
 }
 
 void setup() {
-  Serial.begin(115200);
   delay(1000);
 
-  Serial.println("\n==============================");
-  Serial.println("NodeMCU PyGit");
-  Serial.println("==============================");
-
-  if (!LittleFS.begin()) {
-    Serial.println("ERROR: LittleFS mount FAILED.");
-    return;
-  }
-
-  Serial.println("LittleFS mounted.");
+  if (!LittleFS.begin()) return;
   loadLocalDeviceConfig();
 
   pinMode(COIN_PIN, INPUT_PULLUP);
   pinMode(TRIGGER_PIN, OUTPUT);
   digitalWrite(TRIGGER_PIN, LOW);
-
   attachInterrupt(digitalPinToInterrupt(COIN_PIN), coinInterrupt, FALLING);
 
   if (flashPressedAtStartup()) startWiFiSetup();
 
-  if (!loadWiFiConfig()) {
-    Serial.println("Wi-Fi configuration NOT FOUND in LittleFS.");
-    Serial.println("Starting automatic Wi-Fi setup portal...");
-    startWiFiSetup();
-  }
-
-  Serial.println("Wi-Fi configuration loaded from LittleFS.");
-
-  if (!connectWiFi()) {
-    Serial.println("Saved Wi-Fi connection FAILED.");
-    Serial.println("Starting automatic Wi-Fi setup portal...");
-    startWiFiSetup();
-  }
-
-  Serial.println("\nPyGit base code online.");
+  if (!loadWiFiConfig()) startWiFiSetup();
+  if (!connectWiFi()) startWiFiSetup();
 
   checkGitHubConfig();
   startCoinServer();
-
-  Serial.println("Coinslot input: D6 / GPIO12");
-  Serial.println("Expected coin pulse: LOW for about 50 ms");
-  Serial.println("Coinslot control: D5 / GPIO14");
-  Serial.println("Coinslot ON: GPIO14 HIGH");
-  Serial.println("Coinslot OFF: GPIO14 LOW");
-  Serial.println("Control server: TCP 5001");
-  Serial.println("PC receiver: TCP 5000");
-  Serial.println("One-PC lock: ENABLED");
-  Serial.println("Time input unit: MINUTES");
-  Serial.println("Waiting for PC receiver...");
-
   lastCheck = millis();
 }
 
