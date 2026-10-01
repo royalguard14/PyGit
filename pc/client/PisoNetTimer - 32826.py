@@ -204,22 +204,40 @@ def unlock_input():
 # ================= COIN RECEIVER =================
 def get_nodemcu_status():
     global nodemcu_ip
-    try:
-        sock=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-        sock.settimeout(1.0)
-        sock.connect((NODEMCU_IP,NODEMCU_PORT))
-        sock.sendall(b"STATUS\n")
-        response=sock.recv(256).decode("utf-8",errors="ignore").strip()
-        sock.close()
-        if response.startswith("NODEMCU|"):
-            parts=response.split("|",2)
-            active_pc=parts[2].strip() if len(parts)>=3 else "NONE"
-            nodemcu_ip=NODEMCU_IP
-            return NODEMCU_IP,active_pc or "NONE"
-    except OSError:
-        try: sock.close()
-        except: pass
-    return None,None
+
+    # Use the fixed NodeMCU address and retry a few times so a brief
+    # Wi-Fi/TCP delay does not make the button show Offline.
+    for _ in range(3):
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.connect((NODEMCU_IP, NODEMCU_PORT))
+            sock.sendall(b"STATUS\n")
+
+            response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+
+            if response.startswith("NODEMCU|"):
+                parts = response.split("|", 2)
+                if len(parts) >= 3:
+                    active_pc = parts[2].strip() or "NONE"
+                    nodemcu_ip = NODEMCU_IP
+                    sock.close()
+                    return NODEMCU_IP, active_pc
+
+        except OSError:
+            pass
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+        time.sleep(0.2)
+
+    return None, None
 
 def request_nodemcu():
     """Claim the NodeMCU and keep this TCP connection for heartbeat/release."""
