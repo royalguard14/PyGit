@@ -27,6 +27,7 @@ volatile unsigned long lastCoinInterrupt = 0;
 volatile bool coinPulseDetected = false;
 unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
 unsigned long lastControlHeartbeat = 0;
+unsigned long controlLostSince = 0;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
