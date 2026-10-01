@@ -237,19 +237,61 @@ def show_overlay():
             except:
                 pass
 
-        # PC name at the top-left with black stroke/outline
-        font = ("Arial", 32, "bold")
-        stroke = 2
-        x = 25
-        y = 25
+        # PC name badge at the top-left
+        font = ("Arial", 64, "bold")
+        x = 35
+        y = 30
+
+        # Decorative pill-shaped badge
+        text_width = max(260, len(PC_NAME) * 43)
+        text_height = 78
+        pad_x = 30
+        pad_y = 18
+        badge_x1 = x
+        badge_y1 = y
+        badge_x2 = x + text_width + (pad_x * 2)
+        badge_y2 = y + text_height + (pad_y * 2)
+        r = 24
+
+        # Shadow
+        canvas.create_oval(badge_x1 + 7, badge_y1 + 7,
+                           badge_x1 + r * 2 + 7, badge_y2 + 7,
+                           fill="black", outline="")
+        canvas.create_oval(badge_x2 - r * 2 + 7, badge_y1 + 7,
+                           badge_x2 + 7, badge_y2 + 7,
+                           fill="black", outline="")
+        canvas.create_rectangle(badge_x1 + r + 7, badge_y1 + 7,
+                                badge_x2 - r + 7, badge_y2 + 7,
+                                fill="black", outline="")
+
+        # White pill background
+        canvas.create_oval(badge_x1, badge_y1,
+                           badge_x1 + r * 2, badge_y2,
+                           fill="white", outline="")
+        canvas.create_oval(badge_x2 - r * 2, badge_y1,
+                           badge_x2, badge_y2,
+                           fill="white", outline="")
+        canvas.create_rectangle(badge_x1 + r, badge_y1,
+                                badge_x2 - r, badge_y2,
+                                fill="white", outline="")
+
+        # Decorative accent
+        canvas.create_oval(badge_x1 + 16, badge_y1 + 16,
+                           badge_x1 + 38, badge_y1 + 38,
+                           fill="black", outline="")
+
+        # PC name with black stroke/outline
+        stroke = 3
+        text_x = badge_x1 + 52
+        text_y = badge_y1 + pad_y
 
         for dx, dy in [(-stroke, -stroke), (0, -stroke), (stroke, -stroke),
                        (-stroke, 0),                    (stroke, 0),
                        (-stroke, stroke),  (0, stroke),  (stroke, stroke)]:
-            canvas.create_text(x + dx, y + dy,
+            canvas.create_text(text_x + dx, text_y + dy,
                                text=PC_NAME, fill="black", font=font, anchor="nw")
 
-        canvas.create_text(x, y,
+        canvas.create_text(text_x, text_y,
                            text=PC_NAME, fill="white", font=font, anchor="nw")
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
