@@ -376,12 +376,16 @@ def live_nodemcu_loop():
                         coin_receiving = False
             else:
                 missed_status += 1
-                if missed_status >= MAX_MISSED_STATUS:
+                with node_lock:
+                    owns_node = node_socket is not None
+                if missed_status >= MAX_MISSED_STATUS and not owns_node:
                     nodemcu_ip = None
                     nodemcu_active_pc = None
         except Exception:
             missed_status += 1
-            if missed_status >= MAX_MISSED_STATUS:
+            with node_lock:
+                owns_node = node_socket is not None
+            if missed_status >= MAX_MISSED_STATUS and not owns_node:
                 nodemcu_ip = None
                 nodemcu_active_pc = None
 
@@ -408,9 +412,19 @@ def live_nodemcu_loop():
 def update_coin_window_display():
     if coin_window_label is None:
         return
+
     value = max(0, coin_window_remaining)
+
+    def refresh():
+        if value > 0:
+            coin_window_label.config(text=f"INSERT COIN WINDOW: {value}s")
+            coin_window_label.place(relx=0.5, rely=0.84, anchor="center")
+        else:
+            coin_window_label.config(text="")
+            coin_window_label.place_forget()
+
     try:
-        root.after(0, lambda: coin_window_label.config(text=f"INSERT COIN WINDOW: {value}s"))
+        root.after(0, refresh)
     except Exception:
         pass
 
@@ -541,7 +555,7 @@ def handle_coin_receiver_connection(conn):
                     continue
 
                 # Direct NodeMCU coin protocol: PC_NAME:+minutes
-                m = re.match(rf"^{re.escape(PC_NAME)}:(\\+|\\-)(\\d+)$", line, re.I)
+                m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)(\d+)$", line, re.I)
                 if m:
                     sign, minutes = m.groups()
                     minutes = int(minutes)
@@ -568,7 +582,10 @@ def handle_coin_receiver_connection(conn):
 def request_receiving():
     global coin_requesting, coin_receiving
 
-    accepted = request_nodemcu()
+    try:
+        accepted = request_nodemcu()
+    except Exception:
+        accepted = False
 
     if accepted:
         coin_receiving = True
@@ -658,8 +675,16 @@ def show_overlay():
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
 
-    coin_window_label = tk.Label(overlay, text="", font=("Arial", 18, "bold"), bg="black", fg="white", padx=18, pady=8)
-    coin_window_label.place(relx=0.5, rely=0.84, anchor="center")
+    coin_window_label = tk.Label(
+        overlay,
+        text="",
+        font=("Arial", 18, "bold"),
+        bg="black",
+        fg="white",
+        padx=18,
+        pady=8
+    )
+    coin_window_label.place_forget()
 
     # Keep a reference for the coin receiver functions.
     globals()["insert_coin_button"] = insert_coin_button
