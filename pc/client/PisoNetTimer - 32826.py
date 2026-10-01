@@ -321,7 +321,28 @@ def request_nodemcu():
         request = f"REQUEST|{PC_NAME}|{local_ip}|{PORT}\n"
         sock.sendall(request.encode("utf-8"))
 
-        response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+        # NodeMCU may deliver the ACCEPTED response in fragments, so read
+        # the TCP stream until the complete line is received.
+        response_buffer = b""
+        response_deadline = time.time() + COIN_REQUEST_TIMEOUT
+
+        while b"\n" not in response_buffer and time.time() < response_deadline:
+            try:
+                chunk = sock.recv(256)
+            except socket.timeout:
+                continue
+
+            if not chunk:
+                # Give the ESP8266 a moment if the connection is still being
+                # finalized on its side.
+                time.sleep(0.05)
+                continue
+
+            response_buffer += chunk
+
+        response = response_buffer.decode("utf-8", errors="ignore").strip()
+
+        print(f"[PYGIT] REQUEST response: {response!r}", flush=True)
 
         if response.startswith("ACCEPTED|"):
             sock.settimeout(None)
@@ -339,10 +360,14 @@ def request_nodemcu():
 
             return True
 
+        if response.startswith("REJECTED|"):
+            print(f"[PYGIT] NodeMCU rejected REQUEST: {response}", flush=True)
+
         sock.close()
         return False
 
-    except OSError:
+    except OSError as e:
+        print(f"[PYGIT] REQUEST ERROR: {type(e).__name__}: {e}", flush=True)
         if sock:
             try:
                 sock.close()
