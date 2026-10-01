@@ -199,11 +199,11 @@ def unlock_input():
             pass
 
 # ================= COIN RECEIVER =================
-def discover_nodemcu(local_ip):
-    """Find the PyGit NodeMCU on the local /24 subnet."""
+def probe_nodemcu(local_ip):
+    """Live non-claiming probe. STATUS does not change the selected PC."""
     parts = local_ip.split(".")
     if len(parts) != 4 or any(not p.isdigit() for p in parts):
-        return None, None
+        return None
 
     prefix = ".".join(parts[:3])
     local_last = int(parts[3])
@@ -214,15 +214,12 @@ def discover_nodemcu(local_ip):
         sock.settimeout(NODEMCU_DISCOVERY_TIMEOUT)
         try:
             sock.connect((ip, NODEMCU_PORT))
-            sock.settimeout(1.5)
-            request = f"REQUEST|{PC_NAME}|{local_ip}|{PORT}\\n"
-            sock.sendall(request.encode("utf-8"))
+            sock.sendall(b"STATUS\\n")
+            sock.settimeout(1.0)
             response = sock.recv(256).decode("utf-8", errors="ignore").strip()
-
-            if response.startswith("ACCEPTED|") or response.startswith("REJECTED|ACTIVE|"):
-                return ip, sock, response
-
             sock.close()
+            if response.startswith("NODEMCU|"):
+                return ip
         except OSError:
             try:
                 sock.close()
@@ -232,7 +229,6 @@ def discover_nodemcu(local_ip):
 
     executor = ThreadPoolExecutor(max_workers=NODEMCU_DISCOVERY_WORKERS)
     futures = [executor.submit(probe, ip) for ip in candidates]
-
     try:
         for future in as_completed(futures, timeout=COIN_REQUEST_TIMEOUT):
             result = future.result()
@@ -240,45 +236,91 @@ def discover_nodemcu(local_ip):
                 for other in futures:
                     if other is not future:
                         other.cancel()
-                executor.shutdown(wait=False, cancel_futures=True)
-                return result[0], (result[1], result[2])
+                return result
     except TimeoutError:
         pass
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
+    return None
 
-    return None, None
 
-
-def connect_to_nodemcu():
-    global nodemcu_ip, node_socket
-
-    local_ip = get_local_ip()
-    found = discover_nodemcu(local_ip)
-
-    if not found or not found[0]:
-        return False, "NODEMCU NOT FOUND"
-
-    node_ip, discovery = found
-    sock, response = discovery
-    nodemcu_ip = node_ip
-
-    if response.startswith("ACCEPTED|"):
-        with node_lock:
-            if node_socket:
-                try:
-                    node_socket.close()
-                except OSError:
-                    pass
-            node_socket = sock
-        return True, response
-
+def claim_nodemcu():
+    global nodemcu_ip
     try:
+        local_ip = get_local_ip()
+        found = probe_nodemcu(local_ip)
+        if not found:
+            return False
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(COIN_REQUEST_TIMEOUT)
+        sock.connect((found, NODEMCU_PORT))
+        sock.sendall(f"CLAIM|{PC_NAME}\\n".encode("utf-8"))
+        response = sock.recv(256).decode("utf-8", errors="ignore").strip()
         sock.close()
+
+        if response.startswith("CLAIMED|"):
+            nodemcu_ip = found
+            return True
+    except OSError:
+        try:
+            sock.close()
+        except Exception:
+            pass
+    return False
+
+
+def release_from_nodemcu():
+    global coin_receiving, coin_window_running, coin_window_remaining
+
+    if not nodemcu_ip:
+        return
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    try:
+        sock.connect((nodemcu_ip, NODEMCU_PORT))
+        sock.sendall(f"RELEASE|{PC_NAME}\\n".encode("utf-8"))
+        sock.recv(128)
     except OSError:
         pass
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
 
-    return False, response or "REJECTED"
+    coin_receiving = False
+    coin_window_running = False
+    coin_window_remaining = 0
+
+
+def live_nodemcu_loop():
+    global nodemcu_ip
+
+    while True:
+        time.sleep(2)
+        try:
+            nodemcu_ip = probe_nodemcu(get_local_ip())
+        except Exception:
+            nodemcu_ip = None
+
+        def refresh_button():
+            if "insert_coin_button" not in globals():
+                return
+            if coin_receiving:
+                insert_coin_button.config(text="STOP RECEIVING", state="normal")
+            elif coin_requesting:
+                insert_coin_button.config(text="Connecting...", state="disabled")
+            elif nodemcu_ip:
+                insert_coin_button.config(text="Insert Coin", state="normal")
+            else:
+                insert_coin_button.config(text="NodeMCU Offline", state="disabled")
+
+        try:
+            root.after(0, refresh_button)
+        except Exception:
+            pass
 
 
 def release_from_nodemcu():
@@ -455,26 +497,23 @@ def handle_coin_receiver_connection(conn):
 def request_receiving():
     global coin_requesting, coin_receiving
 
-    accepted, response = connect_to_nodemcu()
+    accepted = claim_nodemcu()
 
     if accepted:
         coin_receiving = True
         coin_requesting = False
-
+        start_coin_window()
         root.after(0, lambda: insert_coin_button.config(
             text="STOP RECEIVING",
             state="normal"
         ))
-
-        threading.Thread(target=coin_heartbeat, daemon=True).start()
         return
 
     coin_receiving = False
     coin_requesting = False
-
     root.after(0, lambda: insert_coin_button.config(
-        text="Insert Coin",
-        state="normal"
+        text="Insert Coin" if nodemcu_ip else "NodeMCU Offline",
+        state="normal" if nodemcu_ip else "disabled"
     ))
 
 
@@ -484,30 +523,19 @@ def toggle_coin_receiving():
     if coin_receiving:
         coin_receiving = False
         stop_coin_window()
-
-        threading.Thread(
-            target=release_from_nodemcu,
-            daemon=True
-        ).start()
-
+        threading.Thread(target=release_from_nodemcu, daemon=True).start()
         insert_coin_button.config(
-            text="Insert Coin",
-            state="normal"
+            text="Insert Coin" if nodemcu_ip else "NodeMCU Offline",
+            state="normal" if nodemcu_ip else "disabled"
         )
         return
 
-    if coin_requesting:
+    if coin_requesting or not nodemcu_ip:
         return
 
     coin_requesting = True
-    insert_coin_button.config(
-        state="disabled"
-    )
-
-    threading.Thread(
-        target=request_receiving,
-        daemon=True
-    ).start()
+    insert_coin_button.config(text="Connecting...", state="disabled")
+    threading.Thread(target=request_receiving, daemon=True).start()
 
 
 def handle_coin_socket(conn):
@@ -549,7 +577,8 @@ def show_overlay():
         font=("Arial", 24, "bold"),
         padx=35,
         pady=12,
-        cursor="hand2"
+        cursor="hand2",
+        state="disabled"
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
 
@@ -668,16 +697,13 @@ def handle_client(conn, addr):
     try:
         data = conn.recv(1024).decode().strip()
 
-        # NodeMCU coin-receiver protocol uses the same PC port.
-        if data == "PYGIT READY" or data.startswith("COIN:"):
-            handle_coin_receiver_connection(conn)
-            return
-
-        m = re.match(rf"{PC_NAME}:(\+|\-)(\d+)(:admin:(.+))?", data, re.I)
+        m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)?(\d+)(:admin:(.+))?$", data, re.I)
 
         if m:
             sign, minutes, _, key = m.groups()
             minutes = int(minutes)
+            if sign is None:
+                sign = "+"
 
             is_admin_cmd = key == ADMIN_KEY
 
@@ -743,6 +769,8 @@ threading.Thread(target=coin_window_loop, daemon=True).start()
 
 root = tk.Tk()
 root.withdraw()
+
+threading.Thread(target=live_nodemcu_loop, daemon=True).start()
 
 
 def update():
