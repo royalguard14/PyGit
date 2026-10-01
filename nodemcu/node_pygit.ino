@@ -47,6 +47,12 @@ String activePcName = "";
 IPAddress activePcIP;
 uint16_t activePcPort = DEFAULT_PC_PORT;
 
+void serialLog(const String& message) {
+  Serial.print("[PYGIT] ");
+  Serial.println(message);
+}
+
+
 String jsonValue(const String& json, const String& key) {
   String token = "\"" + key + "\"";
   int p = json.indexOf(token);
@@ -274,6 +280,7 @@ void checkDeviceConfig(const String& remote) {
   }
 
   if (localVersion != remoteVersion) {
+    serialLog("Device config update: " + localVersion + " -> " + remoteVersion);
     saveDeviceConfig(remoteObject);
     applyDeviceConfig(remoteObject);
   } else {
@@ -324,7 +331,7 @@ void startCoinServer() {
 }
 
 void clearActiveClient(const char* reason) {
-  (void)reason;
+  serialLog("ACTIVE RELEASED: " + String(reason));
   if (receiverClient) receiverClient.stop();
   if (controlClient) controlClient.stop();
 
@@ -348,6 +355,7 @@ bool connectToPCReceiver() {
 }
 
 void processStatus(WiFiClient& client) {
+  serialLog("STATUS request -> " + String(activeClient ? "ACTIVE: " + activePcName : "NONE"));
   client.print("NODEMCU|");
   client.print(WiFi.localIP());
   client.print("|");
@@ -383,6 +391,7 @@ void processRequest(const String& line, WiFiClient& client) {
   pcPortText.trim();
 
   if (command != "REQUEST") {
+    serialLog("Unknown command: " + command);
     client.println("ERROR|UNKNOWN COMMAND");
     return;
   }
@@ -396,12 +405,16 @@ void processRequest(const String& line, WiFiClient& client) {
   uint16_t pcPort = pcPortText.toInt();
   if (pcPort == 0) pcPort = DEFAULT_PC_PORT;
 
+  serialLog("REQUEST from " + pcName + " (" + pcIPText + ":" + String(pcPort) + ")");
+
   if (activeClient) {
     if (activePcName == pcName && activePcIP == pcIP && activePcPort == pcPort) {
+      serialLog("REQUEST accepted again for active PC: " + activePcName);
       client.println("ACCEPTED|" + activePcName);
       return;
     }
 
+    serialLog("REQUEST rejected. Active PC: " + activePcName);
     client.print("REJECTED|ACTIVE|");
     client.print(activePcName);
     client.print("|");
@@ -413,6 +426,7 @@ void processRequest(const String& line, WiFiClient& client) {
 
   activeClient = true;
   lastControlHeartbeat = millis();
+  serialLog("CLAIMING NodeMCU for " + pcName + " -> GPIO14 HIGH");
   controlLostSince = 0;
   digitalWrite(TRIGGER_PIN, HIGH);
   activePcName = pcName;
@@ -420,6 +434,7 @@ void processRequest(const String& line, WiFiClient& client) {
   activePcPort = pcPort;
 
   if (!connectToPCReceiver()) {
+    serialLog("PC receiver unreachable: " + pcIPText + ":" + String(pcPort));
     client.println("REJECTED|PC_UNREACHABLE");
     clearActiveClient("PC receiver unreachable");
     return;
@@ -427,6 +442,7 @@ void processRequest(const String& line, WiFiClient& client) {
 
   controlClient = client;
   controlClient.setNoDelay(true);
+  serialLog("ACCEPTED: " + activePcName + " (" + activePcIP.toString() + ":" + String(activePcPort) + ")");
   client.print("ACCEPTED|");
   client.println(activePcName);
 }
@@ -445,6 +461,7 @@ void handleControlServer() {
         String line = controlClient.readStringUntil('\n');
         line.trim();
         if (line == "PING") {
+          serialLog("PING from " + activePcName + " -> PONG");
           controlClient.println("PONG");
           lastControlHeartbeat = millis();
           continue;
@@ -453,6 +470,7 @@ void handleControlServer() {
           String pcName = line.substring(8);
           pcName.trim();
           if (pcName == activePcName) {
+            serialLog("RELEASE request from " + pcName);
             controlClient.println("RELEASED|" + activePcName);
             clearActiveClient("Client requested release");
             return;
@@ -505,12 +523,18 @@ void handleCoinPulse() {
   }
   interrupts();
 
-  if (!pulse || !activeClient) return;
+  if (!pulse) return;
+  if (!activeClient) {
+    serialLog("COIN pulse ignored: no active PC");
+    return;
+  }
 
+  serialLog("COIN pulse -> " + activePcName + ":+" + String(timeInputPerPulse) + " min");
   digitalWrite(TRIGGER_PIN, HIGH);
 
   if (!receiverClient || !receiverClient.connected()) {
     if (!connectToPCReceiver()) {
+      serialLog("Unable to reconnect to receiver.");
       clearActiveClient("PC receiver connection lost");
       return;
     }
@@ -522,10 +546,15 @@ void handleCoinPulse() {
 }
 
 void setup() {
+  Serial.begin(115200);
   delay(1000);
+  Serial.println();
+  serialLog("NodeMCU starting...");
+  serialLog("MAC: " + WiFi.macAddress());
 
   if (!LittleFS.begin()) return;
   loadLocalDeviceConfig();
+  serialLog("Local device config loaded. Time per pulse: " + String(timeInputPerPulse) + " min");
 
   pinMode(COIN_PIN, INPUT_PULLUP);
   pinMode(TRIGGER_PIN, OUTPUT);
@@ -534,11 +563,22 @@ void setup() {
 
   if (flashPressedAtStartup()) startWiFiSetup();
 
-  if (!loadWiFiConfig()) startWiFiSetup();
-  if (!connectWiFi()) startWiFiSetup();
+  if (!loadWiFiConfig()) {
+    serialLog("Wi-Fi config not found. Starting setup AP...");
+    startWiFiSetup();
+  }
+  serialLog("Connecting to Wi-Fi: " + wifiSSID);
+  if (!connectWiFi()) {
+    serialLog("Wi-Fi connection failed. Starting setup AP...");
+    startWiFiSetup();
+  }
+  serialLog("Wi-Fi connected. IP: " + WiFi.localIP().toString());
 
   checkGitHubConfig();
+  serialLog("Device config checked. Time per pulse: " + String(timeInputPerPulse) + " min");
   startCoinServer();
+  serialLog("Control server listening on port " + String(CONTROL_PORT));
+  serialLog("GPIO14 initialized LOW.");
   lastCheck = millis();
 }
 
