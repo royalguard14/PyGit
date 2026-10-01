@@ -1,4 +1,4 @@
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
@@ -37,7 +37,7 @@ CLOSE_HOUR = 22
 CLOSE_MINUTE = 30
 
 # ================= CRASH RECOVERY =================
-RECOVERY_FILE = "E:/recovery.json"
+RECOVERY_FILE = "D:/recovery.json"
 os.makedirs(os.path.dirname(RECOVERY_FILE), exist_ok=True)
 
 def save_state():
