@@ -344,12 +344,27 @@ bool connectToPCReceiver() {
 
   if (!receiverClient.connect(activePcIP, activePcPort)) return false;
   receiverClient.setNoDelay(true);
-  receiverClient.println("PYGIT READY");
   return true;
 }
 
+void processStatus(WiFiClient& client) {
+  client.print("NODEMCU|");
+  client.print(WiFi.localIP());
+  client.print("|");
+  if (activeClient) client.println(activePcName);
+  else client.println("NONE");
+}
+
 void processRequest(const String& line, WiFiClient& client) {
-  int p1 = line.indexOf('|');
+  String requestLine = line;
+  requestLine.trim();
+
+  if (requestLine == "STATUS") {
+    processStatus(client);
+    return;
+  }
+
+  int p1 = requestLine.indexOf('|');
   int p2 = line.indexOf('|', p1 + 1);
   int p3 = line.indexOf('|', p2 + 1);
   if (p1 < 0 || p2 < 0 || p3 < 0) {
@@ -357,10 +372,10 @@ void processRequest(const String& line, WiFiClient& client) {
     return;
   }
 
-  String command = line.substring(0, p1);
-  String pcName = line.substring(p1 + 1, p2);
-  String pcIPText = line.substring(p2 + 1, p3);
-  String pcPortText = line.substring(p3 + 1);
+  String command = requestLine.substring(0, p1);
+  String pcName = requestLine.substring(p1 + 1, p2);
+  String pcIPText = requestLine.substring(p2 + 1, p3);
+  String pcPortText = requestLine.substring(p3 + 1);
 
   command.trim();
   pcName.trim();
@@ -501,7 +516,8 @@ void handleCoinPulse() {
     }
   }
 
-  receiverClient.print("COIN:");
+  receiverClient.print(activePcName);
+  receiverClient.print(":+");
   receiverClient.println(timeInputPerPulse);
 }
 
