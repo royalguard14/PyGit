@@ -2,6 +2,7 @@ VERSION = "1.4.1"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image, ImageTk
 import keyboard
 import winreg, ctypes
@@ -24,6 +25,11 @@ IMAGE_FOLDER = "C:/sufyan"
 DETAIL_JSON = os.path.join(IMAGE_FOLDER, "detail.json")
 
 SLIDE_INTERVAL = 5
+NODEMCU_PORT = 5001
+NODEMCU_DISCOVERY_TIMEOUT = 0.35
+NODEMCU_DISCOVERY_WORKERS = 32
+COIN_TIME_PER_PULSE = 10
+COIN_REQUEST_TIMEOUT = 3.0
 IP_BASE = 100
 MAX_PC = 10
 
@@ -71,6 +77,14 @@ overlay = None
 overlay_active = False
 slide_index = 0
 images = []
+coin_receiving = False
+coin_requesting = False
+nodemcu_ip = None
+node_socket = None
+node_lock = threading.Lock()
+coin_window_seconds = 10
+coin_window_remaining = 0
+coin_window_running = False
 
 # ================= TIME =================
 def get_ntp_time():
@@ -184,6 +198,322 @@ def unlock_input():
         except:
             pass
 
+# ================= COIN RECEIVER =================
+def discover_nodemcu(local_ip):
+    """Find the PyGit NodeMCU on the local /24 subnet."""
+    parts = local_ip.split(".")
+    if len(parts) != 4 or any(not p.isdigit() for p in parts):
+        return None, None
+
+    prefix = ".".join(parts[:3])
+    local_last = int(parts[3])
+    candidates = [f"{prefix}.{i}" for i in range(1, 255) if i != local_last]
+
+    def probe(ip):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(NODEMCU_DISCOVERY_TIMEOUT)
+        try:
+            sock.connect((ip, NODEMCU_PORT))
+            sock.settimeout(1.5)
+            request = f"REQUEST|{PC_NAME}|{local_ip}|{PORT}\\n"
+            sock.sendall(request.encode("utf-8"))
+            response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+
+            if response.startswith("ACCEPTED|") or response.startswith("REJECTED|ACTIVE|"):
+                return ip, sock, response
+
+            sock.close()
+        except OSError:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        return None
+
+    executor = ThreadPoolExecutor(max_workers=NODEMCU_DISCOVERY_WORKERS)
+    futures = [executor.submit(probe, ip) for ip in candidates]
+
+    try:
+        for future in as_completed(futures, timeout=COIN_REQUEST_TIMEOUT):
+            result = future.result()
+            if result:
+                for other in futures:
+                    if other is not future:
+                        other.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                return result[0], (result[1], result[2])
+    except TimeoutError:
+        pass
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    return None, None
+
+
+def connect_to_nodemcu():
+    global nodemcu_ip, node_socket
+
+    local_ip = get_local_ip()
+    found = discover_nodemcu(local_ip)
+
+    if not found or not found[0]:
+        return False, "NODEMCU NOT FOUND"
+
+    node_ip, discovery = found
+    sock, response = discovery
+    nodemcu_ip = node_ip
+
+    if response.startswith("ACCEPTED|"):
+        with node_lock:
+            if node_socket:
+                try:
+                    node_socket.close()
+                except OSError:
+                    pass
+            node_socket = sock
+        return True, response
+
+    try:
+        sock.close()
+    except OSError:
+        pass
+
+    return False, response or "REJECTED"
+
+
+def release_from_nodemcu():
+    global node_socket, coin_receiving, coin_window_running, coin_window_remaining
+
+    with node_lock:
+        sock = node_socket
+
+    if not sock:
+        return
+
+    try:
+        sock.sendall(f"RELEASE|{PC_NAME}\\n".encode("utf-8"))
+        sock.settimeout(2)
+        sock.recv(128)
+    except OSError:
+        pass
+    finally:
+        with node_lock:
+            if node_socket is sock:
+                node_socket = None
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+    coin_receiving = False
+    coin_window_running = False
+    coin_window_remaining = 0
+
+
+def start_coin_window():
+    global coin_window_running, coin_window_remaining
+
+    coin_window_running = True
+    coin_window_remaining = coin_window_seconds
+
+
+def reset_coin_window():
+    global coin_window_running, coin_window_remaining
+
+    if coin_receiving:
+        coin_window_running = True
+        coin_window_remaining = coin_window_seconds
+
+
+def stop_coin_window():
+    global coin_window_running, coin_window_remaining
+
+    coin_window_running = False
+    coin_window_remaining = 0
+
+
+def coin_window_loop():
+    global coin_receiving, coin_window_running, coin_window_remaining
+
+    while True:
+        time.sleep(1)
+
+        if not coin_window_running:
+            continue
+
+        if not coin_receiving:
+            stop_coin_window()
+            continue
+
+        coin_window_remaining -= 1
+
+        if coin_window_remaining <= 0:
+            coin_window_running = False
+            coin_receiving = False
+
+            root.after(0, lambda: insert_coin_button.config(
+                text="Insert Coin",
+                state="normal"
+            ))
+
+            threading.Thread(
+                target=release_from_nodemcu,
+                daemon=True
+            ).start()
+
+
+def coin_heartbeat():
+    global coin_receiving
+
+    while coin_receiving:
+        with node_lock:
+            sock = node_socket
+
+        if not sock:
+            break
+
+        try:
+            sock.sendall(b"PING\\n")
+        except OSError:
+            break
+
+        time.sleep(3)
+
+    if coin_receiving:
+        coin_receiving = False
+        stop_coin_window()
+        root.after(0, lambda: insert_coin_button.config(
+            text="Insert Coin",
+            state="normal"
+        ))
+
+
+def receive_coin_from_nodemcu(minutes):
+    global remaining_seconds
+
+    if not coin_receiving:
+        return
+
+    with lock:
+        remaining_seconds += minutes * 60
+        save_state()
+
+    threading.Thread(
+        target=log_to_google,
+        args=(minutes,),
+        daemon=True
+    ).start()
+
+    reset_coin_window()
+
+
+def handle_coin_receiver_connection(conn):
+    global coin_receiving
+
+    try:
+        conn.settimeout(None)
+        buffer = ""
+
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+
+            buffer += data.decode("utf-8", errors="ignore")
+
+            while "\\n" in buffer:
+                line, buffer = buffer.split("\\n", 1)
+                line = line.strip()
+
+                if line == "PYGIT READY":
+                    coin_receiving = True
+                    start_coin_window()
+
+                    root.after(0, lambda: insert_coin_button.config(
+                        text="STOP RECEIVING",
+                        state="normal"
+                    ))
+                    continue
+
+                if line.startswith("COIN:") and coin_receiving:
+                    try:
+                        minutes = int(line.split(":", 1)[1])
+                    except ValueError:
+                        continue
+
+                    receive_coin_from_nodemcu(minutes)
+
+                    try:
+                        conn.sendall(b"COIN_RECEIVED\\n")
+                    except OSError:
+                        pass
+
+    except OSError:
+        pass
+
+
+def request_receiving():
+    global coin_requesting, coin_receiving
+
+    accepted, response = connect_to_nodemcu()
+
+    if accepted:
+        coin_receiving = True
+        coin_requesting = False
+
+        root.after(0, lambda: insert_coin_button.config(
+            text="STOP RECEIVING",
+            state="normal"
+        ))
+
+        threading.Thread(target=coin_heartbeat, daemon=True).start()
+        return
+
+    coin_receiving = False
+    coin_requesting = False
+
+    root.after(0, lambda: insert_coin_button.config(
+        text="Insert Coin",
+        state="normal"
+    ))
+
+
+def toggle_coin_receiving():
+    global coin_requesting, coin_receiving
+
+    if coin_receiving:
+        coin_receiving = False
+        stop_coin_window()
+
+        threading.Thread(
+            target=release_from_nodemcu,
+            daemon=True
+        ).start()
+
+        insert_coin_button.config(
+            text="Insert Coin",
+            state="normal"
+        )
+        return
+
+    if coin_requesting:
+        return
+
+    coin_requesting = True
+    insert_coin_button.config(
+        state="disabled"
+    )
+
+    threading.Thread(
+        target=request_receiving,
+        daemon=True
+    ).start()
+
+
+def handle_coin_socket(conn):
+    handle_coin_receiver_connection(conn)
+
+
 # ================= LOGGING =================
 def log_to_google(minutes):
     try:
@@ -210,7 +540,7 @@ def show_overlay():
     overlay.configure(cursor="arrow")
 
     def insert_coin():
-        print("Hello World!")
+        toggle_coin_receiving()
 
     insert_coin_button = tk.Button(
         overlay,
@@ -222,6 +552,9 @@ def show_overlay():
         cursor="hand2"
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
+
+    # Keep a reference for the coin receiver functions.
+    globals()["insert_coin_button"] = insert_coin_button
 
     def slide():
         global slide_index
@@ -335,6 +668,11 @@ def handle_client(conn, addr):
     try:
         data = conn.recv(1024).decode().strip()
 
+        # NodeMCU coin-receiver protocol uses the same PC port.
+        if data == "PYGIT READY" or data.startswith("COIN:"):
+            handle_coin_receiver_connection(conn)
+            return
+
         m = re.match(rf"{PC_NAME}:(\+|\-)(\d+)(:admin:(.+))?", data, re.I)
 
         if m:
@@ -386,6 +724,7 @@ def handle_client(conn, addr):
 # ================= SERVER =================
 def server():
     s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((HOST, PORT))
     s.listen(5)
 
@@ -399,6 +738,7 @@ load_state()
 # ================= START =================
 threading.Thread(target=server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
+threading.Thread(target=coin_window_loop, daemon=True).start()
 
 
 root = tk.Tk()
