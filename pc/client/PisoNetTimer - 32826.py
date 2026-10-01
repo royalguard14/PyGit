@@ -88,6 +88,7 @@ coin_window_seconds = 10
 coin_window_remaining = 0
 coin_window_running = False
 coin_window_label = None
+status_label = None
 
 # ================= TIME =================
 def get_ntp_time():
@@ -359,21 +360,38 @@ def live_nodemcu_loop():
             active_pc = nodemcu_active_pc
             if "insert_coin_button" not in globals():
                 return
+
+            # Insert Coin is always clickable. Any connection/status problem
+            # is shown in the status message below the button instead.
+            insert_coin_button.config(
+                text="STOP RECEIVING" if coin_receiving else "Insert Coin",
+                state="normal"
+            )
+
             if coin_receiving:
-                insert_coin_button.config(text="STOP RECEIVING", state="normal")
+                set_nodemcu_status("RECEIVING - " + PC_NAME)
             elif coin_requesting:
-                insert_coin_button.config(text="Connecting...", state="disabled")
+                set_nodemcu_status("Connecting to NodeMCU...")
             elif not nodemcu_ip:
-                insert_coin_button.config(text="NodeMCU Offline", state="disabled")
+                set_nodemcu_status("NodeMCU offline")
             elif active_pc and active_pc not in ("NONE", "", PC_NAME):
-                insert_coin_button.config(text=f"{active_pc} RECEIVING", state="disabled")
+                set_nodemcu_status(f"{active_pc} is connected")
             else:
-                insert_coin_button.config(text="Insert Coin", state="normal")
+                set_nodemcu_status("NodeMCU ready")
 
         try:
             root.after(0, refresh_button)
         except Exception:
             pass
+
+def set_nodemcu_status(message):
+    if status_label is None:
+        return
+    try:
+        root.after(0, lambda: status_label.config(text=message))
+    except Exception:
+        pass
+
 
 def update_coin_window_display():
     if coin_window_label is None:
@@ -474,8 +492,8 @@ def coin_heartbeat():
         coin_receiving = False
         stop_coin_window()
         root.after(0, lambda: insert_coin_button.config(
-            text="Insert Coin" if nodemcu_ip else "NodeMCU Offline",
-            state="normal" if nodemcu_ip else "disabled"
+            text="Insert Coin",
+            state="normal"
         ))
 
 
@@ -570,8 +588,8 @@ def request_receiving():
     coin_requesting = False
 
     root.after(0, lambda: insert_coin_button.config(
-        text="Insert Coin" if nodemcu_ip else "NodeMCU Offline",
-        state="normal" if nodemcu_ip else "disabled"
+        text="Insert Coin",
+        state="normal"
     ))
 
 
@@ -589,7 +607,7 @@ def toggle_coin_receiving():
         )
         return
 
-    if coin_requesting or not nodemcu_ip:
+    if coin_requesting:
         return
 
     coin_requesting = True
@@ -641,6 +659,17 @@ def show_overlay():
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
 
+    status_label = tk.Label(
+        overlay,
+        text="Checking NodeMCU...",
+        font=("Arial", 14, "bold"),
+        bg="black",
+        fg="white",
+        padx=12,
+        pady=5
+    )
+    status_label.place(relx=0.5, rely=0.94, anchor="center")
+
     coin_window_label = tk.Label(
         overlay,
         text="",
@@ -655,6 +684,7 @@ def show_overlay():
     # Keep a reference for the coin receiver functions.
     globals()["insert_coin_button"] = insert_coin_button
     globals()["coin_window_label"] = coin_window_label
+    globals()["status_label"] = status_label
 
     def slide():
         global slide_index
