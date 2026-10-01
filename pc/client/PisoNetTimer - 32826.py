@@ -302,18 +302,10 @@ def request_nodemcu():
     try:
         local_ip = get_local_ip()
         found = NODEMCU_IP
-        status_ip, active_pc = get_nodemcu_status()
-        if not status_ip:
-            return False
-        found = status_ip
 
-        if not found:
-            return False
-
-        # Someone else is already active.
-        if active_pc not in (None, "", "NONE", PC_NAME):
-            return False
-
+        # Do NOT perform a STATUS probe before claiming. STATUS is only for
+        # display/discovery. The NodeMCU itself is the authority and will
+        # ACCEPT or REJECT this REQUEST atomically.
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(COIN_REQUEST_TIMEOUT)
         sock.connect((found, NODEMCU_PORT))
@@ -362,6 +354,9 @@ def request_nodemcu():
 
         if response.startswith("REJECTED|"):
             print(f"[PYGIT] NodeMCU rejected REQUEST: {response}", flush=True)
+            parts = response.split("|")
+            if len(parts) >= 3 and parts[1] == "ACTIVE":
+                nodemcu_active_pc = parts[2].strip() or None
 
         sock.close()
         return False
