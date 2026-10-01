@@ -26,8 +26,8 @@ DETAIL_JSON = os.path.join(IMAGE_FOLDER, "detail.json")
 
 SLIDE_INTERVAL = 5
 NODEMCU_PORT = 5001
-NODEMCU_DISCOVERY_TIMEOUT = 0.35
-NODEMCU_DISCOVERY_WORKERS = 32
+NODEMCU_DISCOVERY_TIMEOUT = 0.50
+NODEMCU_DISCOVERY_WORKERS = 16
 COIN_TIME_PER_PULSE = 10
 COIN_REQUEST_TIMEOUT = 3.0
 IP_BASE = 100
@@ -201,11 +201,10 @@ def unlock_input():
 
 # ================= COIN RECEIVER =================
 def probe_nodemcu(local_ip):
-    """Live non-claiming STATUS probe. Returns (node_ip, active_pc) or None."""
+    """Find NodeMCU once by subnet scan."""
     parts = local_ip.split(".")
     if len(parts) != 4 or any(not p.isdigit() for p in parts):
         return None
-
     prefix = ".".join(parts[:3])
     local_last = int(parts[3])
     candidates = [f"{prefix}.{i}" for i in range(1, 255) if i != local_last]
@@ -218,13 +217,13 @@ def probe_nodemcu(local_ip):
             sock.sendall(b"STATUS\n")
             sock.settimeout(1.0)
             response = sock.recv(256).decode("utf-8", errors="ignore").strip()
-            sock.close()
-
             if response.startswith("NODEMCU|"):
                 parts = response.split("|", 2)
                 active_pc = parts[2].strip() if len(parts) >= 3 else "NONE"
                 return ip, active_pc or "NONE"
         except OSError:
+            pass
+        finally:
             try:
                 sock.close()
             except OSError:
@@ -233,30 +232,41 @@ def probe_nodemcu(local_ip):
 
     executor = ThreadPoolExecutor(max_workers=NODEMCU_DISCOVERY_WORKERS)
     futures = [executor.submit(probe, ip) for ip in candidates]
-
     try:
         for future in as_completed(futures, timeout=COIN_REQUEST_TIMEOUT):
             result = future.result()
             if result:
-                for other in futures:
-                    if other is not future:
-                        other.cancel()
                 return result
     except TimeoutError:
         pass
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
-
     return None
 
-
 def get_nodemcu_status():
-    """Return (node_ip, active_pc) without claiming the NodeMCU."""
+    """Poll the known NodeMCU directly; scan only when no IP is known."""
+    global nodemcu_ip
     try:
+        if nodemcu_ip:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(NODEMCU_DISCOVERY_TIMEOUT + 0.5)
+            try:
+                sock.connect((nodemcu_ip, NODEMCU_PORT))
+                sock.sendall(b"STATUS\n")
+                response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+                if response.startswith("NODEMCU|"):
+                    parts = response.split("|", 2)
+                    active_pc = parts[2].strip() if len(parts) >= 3 else "NONE"
+                    return nodemcu_ip, active_pc or "NONE"
+            finally:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            return None, None
         return probe_nodemcu(get_local_ip()) or (None, None)
     except Exception:
         return None, None
-
 
 def request_nodemcu():
     """Claim the NodeMCU and keep this TCP connection for heartbeat/release."""
@@ -347,34 +357,37 @@ def release_from_nodemcu():
 
 def live_nodemcu_loop():
     global nodemcu_ip, nodemcu_active_pc, coin_receiving
+    missed_status = 0
+    MAX_MISSED_STATUS = 3
 
     while True:
         time.sleep(2)
-
         try:
             found, active_pc = get_nodemcu_status()
-            nodemcu_ip = found
-            nodemcu_active_pc = active_pc
-
             if found:
-                # Keep our own control connection if we are the active PC.
+                missed_status = 0
+                nodemcu_ip = found
+                nodemcu_active_pc = active_pc
                 if active_pc == PC_NAME:
                     with node_lock:
                         owns_node = node_socket is not None
                     if not owns_node:
-                        # Our claim connection was lost; do not steal/reclaim automatically.
                         coin_receiving = False
-
+            else:
+                missed_status += 1
+                if missed_status >= MAX_MISSED_STATUS:
+                    nodemcu_ip = None
+                    nodemcu_active_pc = None
         except Exception:
-            nodemcu_ip = None
-            nodemcu_active_pc = None
-            active_pc = None
+            missed_status += 1
+            if missed_status >= MAX_MISSED_STATUS:
+                nodemcu_ip = None
+                nodemcu_active_pc = None
 
         def refresh_button():
             active_pc = nodemcu_active_pc
             if "insert_coin_button" not in globals():
                 return
-
             if coin_receiving:
                 insert_coin_button.config(text="STOP RECEIVING", state="normal")
             elif coin_requesting:
@@ -390,7 +403,6 @@ def live_nodemcu_loop():
             root.after(0, refresh_button)
         except Exception:
             pass
-
 
 def start_coin_window():
     global coin_window_running, coin_window_remaining
