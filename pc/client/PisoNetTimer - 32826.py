@@ -221,8 +221,20 @@ def show_overlay():
             except:
                 pass
 
-        canvas.create_text(overlay.winfo_screenwidth()//2, overlay.winfo_screenheight()//2,
-                           text=PC_NAME, fill="white", font=("Arial", 60, "bold"))
+        # PC name with black stroke/outline for visibility on any background
+        center_x = overlay.winfo_screenwidth() // 2
+        center_y = overlay.winfo_screenheight() // 2
+        font = ("Arial", 60, "bold")
+        stroke = 3
+
+        for dx, dy in [(-stroke, -stroke), (0, -stroke), (stroke, -stroke),
+                       (-stroke, 0),                    (stroke, 0),
+                       (-stroke, stroke),  (0, stroke),  (stroke, stroke)]:
+            canvas.create_text(center_x + dx, center_y + dy,
+                               text=PC_NAME, fill="black", font=font)
+
+        canvas.create_text(center_x, center_y,
+                           text=PC_NAME, fill="white", font=font)
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
 
