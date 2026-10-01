@@ -207,29 +207,49 @@ def unlock_input():
 def get_nodemcu_status():
     global nodemcu_ip
 
-    # Use the fixed NodeMCU address and retry a few times so a brief
-    # Wi-Fi/TCP delay does not make the button show Offline.
-    for _ in range(3):
+    last_error = None
+
+    # Fixed NodeMCU address. Log the actual TCP/response result so we can
+    # see why a STATUS check fails instead of hiding the error.
+    for attempt in range(1, 4):
         sock = None
         try:
+            print(
+                f"[PYGIT] STATUS check {attempt}/3 -> "
+                f"{NODEMCU_IP}:{NODEMCU_PORT}",
+                flush=True
+            )
+
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2.0)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             sock.connect((NODEMCU_IP, NODEMCU_PORT))
-            sock.sendall(b"STATUS\n")
 
+            print("[PYGIT] STATUS TCP connected", flush=True)
+
+            sock.sendall(b"STATUS\n")
             response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+
+            print(
+                f"[PYGIT] STATUS response: {response!r}",
+                flush=True
+            )
 
             if response.startswith("NODEMCU|"):
                 parts = response.split("|", 2)
                 if len(parts) >= 3:
                     active_pc = parts[2].strip() or "NONE"
                     nodemcu_ip = NODEMCU_IP
-                    sock.close()
                     return NODEMCU_IP, active_pc
 
-        except OSError:
-            pass
+                last_error = "Invalid NodeMCU STATUS response format"
+            else:
+                last_error = "Unexpected NodeMCU STATUS response"
+
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
+            print(f"[PYGIT] STATUS ERROR: {last_error}", flush=True)
+
         finally:
             if sock:
                 try:
@@ -239,8 +259,11 @@ def get_nodemcu_status():
 
         time.sleep(0.2)
 
+    print(
+        f"[PYGIT] NodeMCU STATUS FAILED: {last_error}",
+        flush=True
+    )
     return None, None
-
 def request_nodemcu():
     """Claim the NodeMCU and keep this TCP connection for heartbeat/release."""
     global nodemcu_ip, nodemcu_active_pc, node_socket
