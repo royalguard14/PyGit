@@ -25,6 +25,7 @@ IMAGE_FOLDER = "C:/sufyan"
 DETAIL_JSON = os.path.join(IMAGE_FOLDER, "detail.json")
 
 SLIDE_INTERVAL = 5
+NODEMCU_IP = "192.168.1.23"
 NODEMCU_PORT = 5001
 NODEMCU_DISCOVERY_TIMEOUT = 0.50
 NODEMCU_DISCOVERY_WORKERS = 16
@@ -201,73 +202,24 @@ def unlock_input():
             pass
 
 # ================= COIN RECEIVER =================
-def probe_nodemcu(local_ip):
-    """Find NodeMCU once by subnet scan."""
-    parts = local_ip.split(".")
-    if len(parts) != 4 or any(not p.isdigit() for p in parts):
-        return None
-    prefix = ".".join(parts[:3])
-    local_last = int(parts[3])
-    candidates = [f"{prefix}.{i}" for i in range(1, 255) if i != local_last]
-
-    def probe(ip):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(NODEMCU_DISCOVERY_TIMEOUT)
-        try:
-            sock.connect((ip, NODEMCU_PORT))
-            sock.sendall(b"STATUS\n")
-            sock.settimeout(1.0)
-            response = sock.recv(256).decode("utf-8", errors="ignore").strip()
-            if response.startswith("NODEMCU|"):
-                parts = response.split("|", 2)
-                active_pc = parts[2].strip() if len(parts) >= 3 else "NONE"
-                return ip, active_pc or "NONE"
-        except OSError:
-            pass
-        finally:
-            try:
-                sock.close()
-            except OSError:
-                pass
-        return None
-
-    executor = ThreadPoolExecutor(max_workers=NODEMCU_DISCOVERY_WORKERS)
-    futures = [executor.submit(probe, ip) for ip in candidates]
-    try:
-        for future in as_completed(futures, timeout=COIN_REQUEST_TIMEOUT):
-            result = future.result()
-            if result:
-                return result
-    except TimeoutError:
-        pass
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
-    return None
-
 def get_nodemcu_status():
-    """Poll the known NodeMCU directly; scan only when no IP is known."""
     global nodemcu_ip
     try:
-        if nodemcu_ip:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(NODEMCU_DISCOVERY_TIMEOUT + 0.5)
-            try:
-                sock.connect((nodemcu_ip, NODEMCU_PORT))
-                sock.sendall(b"STATUS\n")
-                response = sock.recv(256).decode("utf-8", errors="ignore").strip()
-                if response.startswith("NODEMCU|"):
-                    parts = response.split("|", 2)
-                    active_pc = parts[2].strip() if len(parts) >= 3 else "NONE"
-                    return nodemcu_ip, active_pc or "NONE"
-            finally:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-            return None, None
-        return probe_nodemcu(get_local_ip()) or (None, None)
-    except Exception:
-        return None, None
+        sock=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect((NODEMCU_IP,NODEMCU_PORT))
+        sock.sendall(b"STATUS\n")
+        response=sock.recv(256).decode("utf-8",errors="ignore").strip()
+        sock.close()
+        if response.startswith("NODEMCU|"):
+            parts=response.split("|",2)
+            active_pc=parts[2].strip() if len(parts)>=3 else "NONE"
+            nodemcu_ip=NODEMCU_IP
+            return NODEMCU_IP,active_pc or "NONE"
+    except OSError:
+        try: sock.close()
+        except: pass
+    return None,None
 
 def request_nodemcu():
     """Claim the NodeMCU and keep this TCP connection for heartbeat/release."""
@@ -277,15 +229,11 @@ def request_nodemcu():
 
     try:
         local_ip = get_local_ip()
-
-        # Use the NodeMCU IP already found by the live STATUS loop.
-        # Do not scan the whole subnet again here; the scan can race with
-        # STATUS probes and make the claim appear to hang.
-        found = nodemcu_ip
-        active_pc = nodemcu_active_pc
-
-        if not found:
-            found, active_pc = get_nodemcu_status()
+        found = NODEMCU_IP
+        status_ip, active_pc = get_nodemcu_status()
+        if not status_ip:
+            return False
+        found = status_ip
 
         if not found:
             return False
