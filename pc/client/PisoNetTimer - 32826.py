@@ -403,42 +403,59 @@ def live_nodemcu_loop():
 
     while True:
         time.sleep(2)
-        try:
-            found, active_pc = get_nodemcu_status()
-            if found:
-                missed_status = 0
-                nodemcu_ip = found
-                nodemcu_active_pc = active_pc
-                if active_pc == PC_NAME:
+
+        # IMPORTANT:
+        # Do not open STATUS connections while this PC is claiming or
+        # receiving. The REQUEST connection is the live control channel,
+        # and STATUS probes were competing with it and causing the ESP8266
+        # TCP server to become unstable/time out.
+        if not coin_receiving and not coin_requesting:
+            try:
+                found, active_pc = get_nodemcu_status()
+                if found:
+                    missed_status = 0
+                    nodemcu_ip = found
+                    nodemcu_active_pc = active_pc
+                else:
+                    missed_status += 1
                     with node_lock:
                         owns_node = node_socket is not None
-                    if not owns_node:
-                        coin_receiving = False
-            else:
+                    if missed_status >= MAX_MISSED_STATUS and not owns_node:
+                        nodemcu_ip = None
+                        nodemcu_active_pc = None
+            except Exception:
                 missed_status += 1
                 with node_lock:
                     owns_node = node_socket is not None
                 if missed_status >= MAX_MISSED_STATUS and not owns_node:
                     nodemcu_ip = None
                     nodemcu_active_pc = None
-        except Exception:
-            missed_status += 1
-            with node_lock:
-                owns_node = node_socket is not None
-            if missed_status >= MAX_MISSED_STATUS and not owns_node:
-                nodemcu_ip = None
-                nodemcu_active_pc = None
 
         def refresh_button():
             active_pc = nodemcu_active_pc
             if "insert_coin_button" not in globals():
                 return
 
-            # Insert Coin is always clickable. Any connection/status problem
-            # is shown in the status message below the button instead.
+            # If another PC owns the NodeMCU, this PC must not be able to
+            # start a competing claim. Otherwise keep the button available.
+            another_pc_active = (
+                active_pc
+                and active_pc not in ("NONE", "", PC_NAME)
+            )
+
+            if coin_receiving:
+                button_state = "normal"
+                button_text = "STOP RECEIVING"
+            elif another_pc_active:
+                button_state = "disabled"
+                button_text = "Insert Coin"
+            else:
+                button_state = "normal"
+                button_text = "Insert Coin"
+
             insert_coin_button.config(
-                text="STOP RECEIVING" if coin_receiving else "Insert Coin",
-                state="normal"
+                text=button_text,
+                state=button_state
             )
 
             if coin_receiving:
@@ -447,7 +464,7 @@ def live_nodemcu_loop():
                 set_nodemcu_status("Connecting to NodeMCU...")
             elif not nodemcu_ip:
                 set_nodemcu_status("NodeMCU offline")
-            elif active_pc and active_pc not in ("NONE", "", PC_NAME):
+            elif another_pc_active:
                 set_nodemcu_status(f"{active_pc} is connected")
             else:
                 set_nodemcu_status("NodeMCU ready")
