@@ -89,6 +89,7 @@ coin_window_remaining = 0
 coin_window_running = False
 coin_window_label = None
 status_label = None
+STATUS_FLASH_MS = 2500
 
 # ================= TIME =================
 def get_ntp_time():
@@ -385,10 +386,24 @@ def live_nodemcu_loop():
             pass
 
 def set_nodemcu_status(message):
+    print(f"[PYGIT] {message}", flush=True)
     if status_label is None:
         return
     try:
         root.after(0, lambda: status_label.config(text=message))
+    except Exception:
+        pass
+
+def flash_nodemcu_status(message):
+    print(f"[PYGIT] {message}", flush=True)
+    if status_label is None:
+        return
+    try:
+        def show():
+            status_label.config(text=message)
+            status_label.place(relx=0.02, rely=0.96, anchor="sw")
+            root.after(STATUS_FLASH_MS, lambda: status_label.config(text=""))
+        root.after(0, show)
     except Exception:
         pass
 
@@ -566,9 +581,13 @@ def handle_coin_receiver_connection(conn):
 def request_receiving():
     global coin_requesting, coin_receiving
 
+    print(f"[PYGIT] Insert Coin clicked by {PC_NAME}", flush=True)
+
     try:
         accepted = request_nodemcu()
-    except Exception:
+    except Exception as e:
+        print(f"[PYGIT] Insert Coin ERROR: {type(e).__name__}: {e}", flush=True)
+        flash_nodemcu_status(f"ERROR: {type(e).__name__}: {e}")
         accepted = False
 
     if accepted:
@@ -586,6 +605,13 @@ def request_receiving():
 
     coin_receiving = False
     coin_requesting = False
+
+    if not nodemcu_ip:
+        flash_nodemcu_status(f"NodeMCU offline - cannot connect to {NODEMCU_IP}:{NODEMCU_PORT}")
+    elif nodemcu_active_pc and nodemcu_active_pc not in ("NONE", "", PC_NAME):
+        flash_nodemcu_status(f"{nodemcu_active_pc} is connected")
+    else:
+        flash_nodemcu_status(f"Cannot connect/claim NodeMCU at {NODEMCU_IP}:{NODEMCU_PORT}")
 
     root.after(0, lambda: insert_coin_button.config(
         text="Insert Coin",
@@ -661,14 +687,14 @@ def show_overlay():
 
     status_label = tk.Label(
         overlay,
-        text="Checking NodeMCU...",
+        text="",
         font=("Arial", 14, "bold"),
         bg="black",
         fg="white",
         padx=12,
         pady=5
     )
-    status_label.place(relx=0.5, rely=0.94, anchor="center")
+    status_label.place(relx=0.02, rely=0.96, anchor="sw")
 
     coin_window_label = tk.Label(
         overlay,
