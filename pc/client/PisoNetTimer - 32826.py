@@ -260,16 +260,26 @@ def get_nodemcu_status():
 
 def request_nodemcu():
     """Claim the NodeMCU and keep this TCP connection for heartbeat/release."""
-    global nodemcu_ip, node_socket
+    global nodemcu_ip, nodemcu_active_pc, node_socket
+
+    sock = None
 
     try:
         local_ip = get_local_ip()
-        found, active_pc = probe_nodemcu(local_ip)
+
+        # Use the NodeMCU IP already found by the live STATUS loop.
+        # Do not scan the whole subnet again here; the scan can race with
+        # STATUS probes and make the claim appear to hang.
+        found = nodemcu_ip
+        active_pc = nodemcu_active_pc
+
+        if not found:
+            found, active_pc = get_nodemcu_status()
 
         if not found:
             return False
 
-        # Someone else became active between STATUS and REQUEST.
+        # Someone else is already active.
         if active_pc not in (None, "", "NONE", PC_NAME):
             return False
 
@@ -288,6 +298,7 @@ def request_nodemcu():
                 old = node_socket
                 node_socket = sock
                 nodemcu_ip = found
+                nodemcu_active_pc = PC_NAME
 
             if old:
                 try:
@@ -301,10 +312,11 @@ def request_nodemcu():
         return False
 
     except OSError:
-        try:
-            sock.close()
-        except Exception:
-            pass
+        if sock:
+            try:
+                sock.close()
+            except OSError:
+                pass
         return False
 
 
