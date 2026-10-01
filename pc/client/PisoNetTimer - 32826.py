@@ -80,6 +80,7 @@ images = []
 coin_receiving = False
 coin_requesting = False
 nodemcu_ip = None
+nodemcu_active_pc = None
 node_socket = None
 node_lock = threading.Lock()
 coin_window_seconds = 10
@@ -214,7 +215,7 @@ def probe_nodemcu(local_ip):
         sock.settimeout(NODEMCU_DISCOVERY_TIMEOUT)
         try:
             sock.connect((ip, NODEMCU_PORT))
-            sock.sendall(b"STATUS\\n")
+            sock.sendall(b"STATUS\n")
             sock.settimeout(1.0)
             response = sock.recv(256).decode("utf-8", errors="ignore").strip()
             sock.close()
@@ -276,7 +277,7 @@ def request_nodemcu():
         sock.settimeout(COIN_REQUEST_TIMEOUT)
         sock.connect((found, NODEMCU_PORT))
 
-        request = f"REQUEST|{PC_NAME}|{local_ip}|{PORT}\\n"
+        request = f"REQUEST|{PC_NAME}|{local_ip}|{PORT}\n"
         sock.sendall(request.encode("utf-8"))
 
         response = sock.recv(256).decode("utf-8", errors="ignore").strip()
@@ -317,7 +318,7 @@ def release_from_nodemcu():
     if sock:
         try:
             sock.settimeout(2)
-            sock.sendall(f"RELEASE|{PC_NAME}\\n".encode("utf-8"))
+            sock.sendall(f"RELEASE|{PC_NAME}\n".encode("utf-8"))
             sock.recv(128)
         except OSError:
             pass
@@ -333,7 +334,7 @@ def release_from_nodemcu():
 
 
 def live_nodemcu_loop():
-    global nodemcu_ip
+    global nodemcu_ip, nodemcu_active_pc, coin_receiving
 
     while True:
         time.sleep(2)
@@ -341,6 +342,7 @@ def live_nodemcu_loop():
         try:
             found, active_pc = get_nodemcu_status()
             nodemcu_ip = found
+            nodemcu_active_pc = active_pc
 
             if found:
                 # Keep our own control connection if we are the active PC.
@@ -353,9 +355,11 @@ def live_nodemcu_loop():
 
         except Exception:
             nodemcu_ip = None
+            nodemcu_active_pc = None
             active_pc = None
 
-        def refresh_button(active_pc=active_pc if 'active_pc' in locals() else None):
+        def refresh_button():
+            active_pc = nodemcu_active_pc
             if "insert_coin_button" not in globals():
                 return
 
@@ -439,7 +443,7 @@ def coin_heartbeat():
             break
 
         try:
-            sock.sendall(b"PING\\n")
+            sock.sendall(b"PING\n")
         except OSError:
             break
 
@@ -488,8 +492,8 @@ def handle_coin_receiver_connection(conn):
 
             buffer += data.decode("utf-8", errors="ignore")
 
-            while "\\n" in buffer:
-                line, buffer = buffer.split("\\n", 1)
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
                 line = line.strip()
 
                 if not line:
@@ -505,14 +509,14 @@ def handle_coin_receiver_connection(conn):
                         receive_coin_from_nodemcu(minutes)
 
                     try:
-                        conn.sendall(b"OK\\n")
+                        conn.sendall(b"OK\n")
                     except OSError:
                         pass
                     continue
 
                 # Ignore unrelated data on the same timer port.
                 try:
-                    conn.sendall(b"ERROR\\n")
+                    conn.sendall(b"ERROR\n")
                 except OSError:
                     pass
 
@@ -728,7 +732,7 @@ def handle_client(conn, addr):
     try:
         data = conn.recv(1024).decode().strip()
 
-        m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)?(\d+)(:admin:(.+))?$", data, re.I)
+        m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)(\d+)(:admin:(.+))?$", data, re.I)
 
         if m:
             sign, minutes, _, key = m.groups()
