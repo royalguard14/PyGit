@@ -20,7 +20,6 @@ const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
 const unsigned long DEFAULT_TIME_PER_PULSE = 10;
 
-const unsigned long CONTROL_GRACE_MS = 10000;
 const unsigned long CONTROL_HEARTBEAT_MS = 3000;
 
 unsigned long lastCheck = 0;
@@ -28,7 +27,6 @@ volatile unsigned long lastCoinInterrupt = 0;
 volatile bool coinPulseDetected = false;
 unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
 unsigned long lastControlHeartbeat = 0;
-unsigned long controlLostSince = 0;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
@@ -450,13 +448,11 @@ void processRequest(const String& line, WiFiClient& client) {
 void handleControlServer() {
   if (activeClient) {
     if (!controlClient || !controlClient.connected()) {
-      if (controlLostSince == 0) controlLostSince = millis();
-      else if (millis() - controlLostSince >= CONTROL_GRACE_MS) {
-        clearActiveClient("Control connection lost");
-        return;
-      }
+      // Do not auto-release because of coin inactivity or a short control
+      // disconnect. PisoNetTimer owns the 10-second coin inactivity timeout
+      // and explicitly sends RELEASE|PCx when that window expires.
+      return;
     } else {
-      controlLostSince = 0;
       while (controlClient.available()) {
         String line = controlClient.readStringUntil('\n');
         line.trim();
