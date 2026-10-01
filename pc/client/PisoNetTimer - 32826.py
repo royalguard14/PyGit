@@ -246,13 +246,32 @@ def get_nodemcu_status():
             )
 
             if response.startswith("NODEMCU|"):
-                parts = response.split("|", 2)
-                if len(parts) >= 3:
-                    active_pc = parts[2].strip() or "NONE"
-                    nodemcu_ip = NODEMCU_IP
-                    return NODEMCU_IP, active_pc
+                # Accept the normal response:
+                #   NODEMCU|192.168.1.23|NONE
+                # and also tolerate ESP8266 TCP framing where the final
+                # separator/line ending is missing:
+                #   NODEMCU|192.168.1.23
+                #   NODEMCU|192.168.1.23NONE
+                payload = response[len("NODEMCU|"):].strip()
 
-                last_error = "Invalid NodeMCU STATUS response format"
+                if payload == NODEMCU_IP:
+                    active_pc = "NONE"
+                elif payload.startswith(NODEMCU_IP):
+                    suffix = payload[len(NODEMCU_IP):].strip()
+                    if suffix.startswith("|"):
+                        suffix = suffix[1:].strip()
+                    active_pc = suffix or "NONE"
+                else:
+                    parts = response.split("|", 2)
+                    if len(parts) >= 2 and parts[1].strip() == NODEMCU_IP:
+                        active_pc = parts[2].strip() if len(parts) >= 3 else "NONE"
+                        active_pc = active_pc or "NONE"
+                    else:
+                        last_error = "Invalid NodeMCU STATUS response format"
+                        continue
+
+                nodemcu_ip = NODEMCU_IP
+                return NODEMCU_IP, active_pc
             else:
                 last_error = "Unexpected NodeMCU STATUS response"
 
