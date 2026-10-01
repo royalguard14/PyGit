@@ -449,10 +449,12 @@ void processRequest(const String& line, WiFiClient& client) {
 void handleControlServer() {
   if (activeClient) {
     if (!controlClient || !controlClient.connected()) {
-      // Do not auto-release because of coin inactivity or a short control
-      // disconnect. PisoNetTimer owns the 10-second coin inactivity timeout
-      // and explicitly sends RELEASE|PCx when that window expires.
-      return;
+      // The control channel is the ownership connection. If it is truly
+      // gone, release the stale claim so STATUS/REQUEST clients can connect
+      // again. Coin inactivity is still owned by PisoNetTimer; this only
+      // handles a dead control TCP connection.
+      clearActiveClient("Control connection lost");
+      // Continue below so the same loop can accept a new STATUS/REQUEST.
     } else {
       while (controlClient.available()) {
         String line = controlClient.readStringUntil('\n');
