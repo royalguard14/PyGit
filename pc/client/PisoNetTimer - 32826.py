@@ -254,29 +254,37 @@ def show_overlay():
         badge_y2 = y + badge_h
         r = 28
 
-        # White semi-transparent-looking pill badge
-        canvas.create_oval(
-            badge_x1, badge_y1, badge_x1 + r * 2, badge_y2,
-            fill="white", outline="black", width=3, stipple="gray25"
-        )
-        canvas.create_oval(
-            badge_x2 - r * 2, badge_y1, badge_x2, badge_y2,
-            fill="white", outline="black", width=3, stipple="gray25"
-        )
-        canvas.create_rectangle(
-            badge_x1 + r, badge_y1, badge_x2 - r, badge_y2,
-            fill="white", outline="black", width=3, stipple="gray25"
+        # Use a single rounded rectangle shape built from a polygon.
+        # This avoids the separate visible circles caused by overlapping ovals.
+        points = [
+            badge_x1 + r, badge_y1,
+            badge_x2 - r, badge_y1,
+            badge_x2, badge_y1 + r,
+            badge_x2, badge_y2 - r,
+            badge_x2 - r, badge_y2,
+            badge_x1 + r, badge_y2,
+            badge_x1, badge_y2 - r,
+            badge_x1, badge_y1 + r
+        ]
+
+        canvas.create_polygon(
+            points,
+            fill="white",
+            outline="black",
+            width=3,
+            stipple="gray25"
         )
 
-        # Decorative accent
-        canvas.create_oval(
-            badge_x1 + 18, badge_y1 + 18,
-            badge_x1 + 42, badge_y1 + 42,
-            fill="black", outline=""
+        # Subtle decorative accent on the left
+        canvas.create_line(
+            badge_x1 + 18, badge_y1 + 20,
+            badge_x1 + 18, badge_y2 - 20,
+            fill="black",
+            width=5
         )
 
-        # PC name centered vertically and horizontally inside the badge
-        center_x = (badge_x1 + badge_x2) // 2 + 18
+        # PC name centered inside the badge
+        center_x = (badge_x1 + badge_x2) // 2 + 10
         center_y = (badge_y1 + badge_y2) // 2
 
         stroke = 3
