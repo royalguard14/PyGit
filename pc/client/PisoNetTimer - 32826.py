@@ -207,6 +207,22 @@ def show_overlay():
     canvas = tk.Canvas(overlay)
     canvas.pack(fill="both", expand=True)
 
+    overlay.configure(cursor="arrow")
+
+    def insert_coin():
+        print("Hello World!")
+
+    insert_coin_button = tk.Button(
+        overlay,
+        text="Insert Coin",
+        command=insert_coin,
+        font=("Arial", 24, "bold"),
+        padx=35,
+        pady=12,
+        cursor="hand2"
+    )
+    insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
+
     def slide():
         global slide_index
         canvas.delete("all")
