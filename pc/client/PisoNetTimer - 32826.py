@@ -86,6 +86,7 @@ node_lock = threading.Lock()
 coin_window_seconds = 10
 coin_window_remaining = 0
 coin_window_running = False
+coin_window_label = None
 
 # ================= TIME =================
 def get_ntp_time():
@@ -404,11 +405,22 @@ def live_nodemcu_loop():
         except Exception:
             pass
 
+def update_coin_window_display():
+    if coin_window_label is None:
+        return
+    value = max(0, coin_window_remaining)
+    try:
+        root.after(0, lambda: coin_window_label.config(text=f"INSERT COIN WINDOW: {value}s"))
+    except Exception:
+        pass
+
+
 def start_coin_window():
     global coin_window_running, coin_window_remaining
 
     coin_window_running = True
     coin_window_remaining = coin_window_seconds
+    update_coin_window_display()
 
 
 def reset_coin_window():
@@ -417,6 +429,7 @@ def reset_coin_window():
     if coin_receiving:
         coin_window_running = True
         coin_window_remaining = coin_window_seconds
+        update_coin_window_display()
 
 
 def stop_coin_window():
@@ -424,6 +437,9 @@ def stop_coin_window():
 
     coin_window_running = False
     coin_window_remaining = 0
+    if coin_window_label is not None:
+        try: root.after(0, lambda: coin_window_label.config(text=""))
+        except Exception: pass
 
 
 def coin_window_loop():
@@ -440,6 +456,7 @@ def coin_window_loop():
             continue
 
         coin_window_remaining -= 1
+        update_coin_window_display()
 
         if coin_window_remaining <= 0:
             coin_window_running = False
@@ -641,8 +658,12 @@ def show_overlay():
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
 
+    coin_window_label = tk.Label(overlay, text="", font=("Arial", 18, "bold"), bg="black", fg="white", padx=18, pady=8)
+    coin_window_label.place(relx=0.5, rely=0.84, anchor="center")
+
     # Keep a reference for the coin receiver functions.
     globals()["insert_coin_button"] = insert_coin_button
+    globals()["coin_window_label"] = coin_window_label
 
     def slide():
         global slide_index
