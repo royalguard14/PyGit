@@ -372,7 +372,7 @@ def request_nodemcu():
 
 
 def release_from_nodemcu():
-    global node_socket, coin_receiving, coin_window_running, coin_window_remaining
+    global node_socket, coin_receiving, coin_window_running, coin_window_remaining, nodemcu_active_pc
 
     with node_lock:
         sock = node_socket
@@ -382,7 +382,10 @@ def release_from_nodemcu():
         try:
             sock.settimeout(2)
             sock.sendall(f"RELEASE|{PC_NAME}\n".encode("utf-8"))
-            sock.recv(128)
+            try:
+                sock.recv(128)
+            except socket.timeout:
+                pass
         except OSError:
             pass
         finally:
@@ -395,6 +398,17 @@ def release_from_nodemcu():
     coin_window_running = False
     coin_window_remaining = 0
     nodemcu_active_pc = None
+
+    # The release must finish before Insert Coin becomes clickable again.
+    # This prevents a new REQUEST from racing the NodeMCU RELEASE command.
+    try:
+        root.after(0, lambda: insert_coin_button.config(
+            text="Insert Coin",
+            state="normal"
+        ))
+        root.after(0, lambda: status_label.config(text=""))
+    except Exception:
+        pass
 
 
 def live_nodemcu_loop():
@@ -495,9 +509,10 @@ def coin_window_loop():
             coin_window_running = False
             coin_receiving = False
 
+            # Do not enable Insert Coin until RELEASE has been sent.
             root.after(0, lambda: insert_coin_button.config(
-                text="Insert Coin",
-                state="normal"
+                text="Releasing...",
+                state="disabled"
             ))
 
             threading.Thread(
@@ -643,12 +658,14 @@ def toggle_coin_receiving():
     if coin_receiving:
         coin_receiving = False
         stop_coin_window()
-        threading.Thread(target=release_from_nodemcu, daemon=True).start()
 
+        # Keep the button disabled until the NodeMCU RELEASE is completed.
         insert_coin_button.config(
-            text="Insert Coin",
-            state="normal"
+            text="Releasing...",
+            state="disabled"
         )
+
+        threading.Thread(target=release_from_nodemcu, daemon=True).start()
         return
 
     if coin_requesting:
