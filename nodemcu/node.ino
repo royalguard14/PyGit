@@ -14,6 +14,7 @@ struct PCInfo { String name; String ip; };
 std::vector<PCInfo> pcs;
 
 ESP8266WebServer server(80);
+WiFiServer discoveryServer(5001);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // ===== STATE =====
@@ -21,7 +22,8 @@ bool wifiConnected = false;
 String storedPassword = "password";
 String selectedPC = "";
 
-int minutesPerPulse = 8;
+int minutesPerPulse = 10;
+String activePC = "";
 int pulseCount = 0;
 int lastCoin = HIGH;
 
@@ -105,6 +107,72 @@ void handleEditor() {
   } else server.send(404, "text/plain", "editor.html not found");
 }
 
+// ===== LIVE PC DISCOVERY / CLAIM =====
+void handleDiscoveryClient(WiFiClient &client) {
+  client.setTimeout(1000);
+
+  String request = client.readStringUntil('\n');
+  request.trim();
+
+  if (request == "STATUS") {
+    client.print("NODEMCU|");
+    client.print(WiFi.localIP().toString());
+    client.print("|");
+    client.print(selectedPC);
+    client.print("\n");
+    client.stop();
+    return;
+  }
+
+  if (request.startsWith("CLAIM|")) {
+    String pcName = request.substring(6);
+    pcName.trim();
+
+    if (findPC(pcName) != nullptr) {
+      selectedPC = pcName;
+      activePC = pcName;
+      Serial.println("Claimed by PC: " + pcName);
+      showSelectedPC();
+
+      client.print("CLAIMED|");
+      client.print(pcName);
+      client.print("\n");
+    } else {
+      client.print("REJECTED|UNKNOWN_PC\n");
+    }
+
+    client.stop();
+    return;
+  }
+
+  if (request.startsWith("RELEASE|")) {
+    String pcName = request.substring(8);
+    pcName.trim();
+
+    if (activePC == pcName) {
+      activePC = "";
+      Serial.println("Released by PC: " + pcName);
+      client.print("RELEASED|");
+      client.print(pcName);
+      client.print("\n");
+    } else {
+      client.print("IGNORED\n");
+    }
+
+    client.stop();
+    return;
+  }
+
+  client.print("ERROR\n");
+  client.stop();
+}
+
+void serviceDiscoveryServer() {
+  WiFiClient client = discoveryServer.accept();
+  if (!client) return;
+  handleDiscoveryClient(client);
+}
+
 // ===== SETUP =====
 void setup() {
   Serial.begin(115200);
@@ -146,6 +214,8 @@ void setup() {
   server.on("/setting", handleSettings);
   server.on("/editor", handleEditor);
   server.begin();
+  discoveryServer.begin();
+  discoveryServer.setNoDelay(true);
 
   showSelectedPC();
 }
@@ -153,6 +223,7 @@ void setup() {
 // ===== LOOP =====
 void loop() {
   server.handleClient();
+  serviceDiscoveryServer();
 
   // update WiFi status (DO NOT RETURN)
   wifiConnected = (WiFi.status() == WL_CONNECTED);
@@ -203,7 +274,7 @@ void loop() {
       client.setTimeout(1000);
       Serial.println("Trying TCP to " + pc->ip);
       if (client.connect(pc->ip.c_str(), 5000)) {
-        String msg = pc->name + ":+" + String(minutes) + "\n";
+        String msg = pc->name + ":" + String(minutes) + "\n";
         client.print(msg);
         client.stop();
         Serial.println("TCP SENT: " + msg);
