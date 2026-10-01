@@ -237,11 +237,10 @@ def show_overlay():
             except:
                 pass
 
-        # PC name badge centered at the top
+        # PC name badge at the top-left, with PC name centered inside
         font = ("Arial", 64, "bold")
-        screen_w = overlay.winfo_screenwidth()
-        x_center = screen_w // 2
-        y = 35
+        x = 35
+        y = 30
 
         text_width = max(260, len(PC_NAME) * 43)
         text_height = 78
@@ -249,15 +248,13 @@ def show_overlay():
         pad_y = 18
         badge_w = text_width + (pad_x * 2) + 45
         badge_h = text_height + (pad_y * 2)
-        badge_x1 = x_center - badge_w // 2
+        badge_x1 = x
         badge_y1 = y
-        badge_x2 = x_center + badge_w // 2
+        badge_x2 = x + badge_w
         badge_y2 = y + badge_h
         r = 28
 
-        # White badge with stipple for a transparent/frosted look.
-        # Tkinter Canvas has no true per-item alpha, so gray25 makes
-        # approximately 75-80% of the background show through.
+        # White semi-transparent-looking pill badge
         canvas.create_oval(
             badge_x1, badge_y1, badge_x1 + r * 2, badge_y2,
             fill="white", outline="black", width=3, stipple="gray25"
@@ -278,22 +275,22 @@ def show_overlay():
             fill="black", outline=""
         )
 
-        # PC name with black stroke/outline
-        stroke = 3
-        text_x = badge_x1 + 55
-        text_y = badge_y1 + pad_y
+        # PC name centered vertically and horizontally inside the badge
+        center_x = (badge_x1 + badge_x2) // 2 + 18
+        center_y = (badge_y1 + badge_y2) // 2
 
+        stroke = 3
         for dx, dy in [(-stroke, -stroke), (0, -stroke), (stroke, -stroke),
                        (-stroke, 0),                    (stroke, 0),
                        (-stroke, stroke),  (0, stroke),  (stroke, stroke)]:
             canvas.create_text(
-                text_x + dx, text_y + dy,
-                text=PC_NAME, fill="black", font=font, anchor="nw"
+                center_x + dx, center_y + dy,
+                text=PC_NAME, fill="black", font=font, anchor="center"
             )
 
         canvas.create_text(
-            text_x, text_y,
-            text=PC_NAME, fill="white", font=font, anchor="nw"
+            center_x, center_y,
+            text=PC_NAME, fill="white", font=font, anchor="center"
         )
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
