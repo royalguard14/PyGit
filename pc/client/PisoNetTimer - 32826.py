@@ -1,4 +1,4 @@
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests
@@ -394,90 +394,16 @@ def release_from_nodemcu():
     coin_receiving = False
     coin_window_running = False
     coin_window_remaining = 0
+    nodemcu_active_pc = None
 
 
 def live_nodemcu_loop():
-    global nodemcu_ip, nodemcu_active_pc, coin_receiving
-    missed_status = 0
-    MAX_MISSED_STATUS = 3
+    """No background NodeMCU polling.
 
-    while True:
-        time.sleep(2)
-
-        # IMPORTANT:
-        # Do not open STATUS connections while this PC is claiming or
-        # receiving. The REQUEST connection is the live control channel,
-        # and STATUS probes were competing with it and causing the ESP8266
-        # TCP server to become unstable/time out.
-        if not coin_receiving and not coin_requesting:
-            try:
-                found, active_pc = get_nodemcu_status()
-                if found:
-                    missed_status = 0
-                    nodemcu_ip = found
-                    nodemcu_active_pc = active_pc
-                else:
-                    missed_status += 1
-                    with node_lock:
-                        owns_node = node_socket is not None
-                    if missed_status >= MAX_MISSED_STATUS and not owns_node:
-                        # STATUS failure does NOT mean the fixed-IP NodeMCU
-                        # is offline. STATUS responses can be dropped by the
-                        # ESP8266 while it is handling another TCP connection.
-                        # Keep the configured IP and let REQUEST be the real
-                        # connectivity/claim test.
-                        nodemcu_ip = NODEMCU_IP
-            except Exception:
-                missed_status += 1
-                with node_lock:
-                    owns_node = node_socket is not None
-                if missed_status >= MAX_MISSED_STATUS and not owns_node:
-                    # Keep fixed NodeMCU IP visible; do not falsely report
-                    # "offline" just because STATUS timed out.
-                    nodemcu_ip = NODEMCU_IP
-
-        def refresh_button():
-            active_pc = nodemcu_active_pc
-            if "insert_coin_button" not in globals():
-                return
-
-            # If another PC owns the NodeMCU, this PC must not be able to
-            # start a competing claim. Otherwise keep the button available.
-            another_pc_active = (
-                active_pc
-                and active_pc not in ("NONE", "", PC_NAME)
-            )
-
-            if coin_receiving:
-                button_state = "normal"
-                button_text = "STOP RECEIVING"
-            elif another_pc_active:
-                button_state = "disabled"
-                button_text = "Insert Coin"
-            else:
-                button_state = "normal"
-                button_text = "Insert Coin"
-
-            insert_coin_button.config(
-                text=button_text,
-                state=button_state
-            )
-
-            if coin_receiving:
-                set_nodemcu_status("RECEIVING - " + PC_NAME)
-            elif coin_requesting:
-                set_nodemcu_status("Connecting to NodeMCU...")
-            elif not nodemcu_ip:
-                set_nodemcu_status("NodeMCU offline")
-            elif another_pc_active:
-                set_nodemcu_status(f"{active_pc} is connected")
-            else:
-                set_nodemcu_status("NodeMCU ready")
-
-        try:
-            root.after(0, refresh_button)
-        except Exception:
-            pass
+    NodeMCU communication starts only when the user presses Insert Coin.
+    The REQUEST connection becomes the live control channel while receiving.
+    """
+    return
 
 def set_nodemcu_status(message):
     print(f"[PYGIT] {message}", flush=True)
@@ -700,9 +626,7 @@ def request_receiving():
     coin_receiving = False
     coin_requesting = False
 
-    if not nodemcu_ip:
-        flash_nodemcu_status(f"NodeMCU offline - cannot connect to {NODEMCU_IP}:{NODEMCU_PORT}")
-    elif nodemcu_active_pc and nodemcu_active_pc not in ("NONE", "", PC_NAME):
+    if nodemcu_active_pc and nodemcu_active_pc not in ("NONE", "", PC_NAME):
         flash_nodemcu_status(f"{nodemcu_active_pc} is connected")
     else:
         flash_nodemcu_status(f"Cannot connect/claim NodeMCU at {NODEMCU_IP}:{NODEMCU_PORT}")
@@ -722,8 +646,8 @@ def toggle_coin_receiving():
         threading.Thread(target=release_from_nodemcu, daemon=True).start()
 
         insert_coin_button.config(
-            text="Insert Coin" if nodemcu_ip else "NodeMCU Offline",
-            state="normal" if nodemcu_ip else "disabled"
+            text="Insert Coin",
+            state="normal"
         )
         return
 
@@ -990,9 +914,6 @@ threading.Thread(target=coin_window_loop, daemon=True).start()
 
 root = tk.Tk()
 root.withdraw()
-
-threading.Thread(target=live_nodemcu_loop, daemon=True).start()
-
 
 def update():
     status, _ = get_shop_status()
