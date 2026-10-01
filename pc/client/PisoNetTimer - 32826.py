@@ -80,7 +80,7 @@ slide_index = 0
 images = []
 coin_receiving = False
 coin_requesting = False
-nodemcu_ip = None
+nodemcu_ip = NODEMCU_IP
 nodemcu_active_pc = None
 node_socket = None
 node_lock = threading.Lock()
@@ -421,15 +421,20 @@ def live_nodemcu_loop():
                     with node_lock:
                         owns_node = node_socket is not None
                     if missed_status >= MAX_MISSED_STATUS and not owns_node:
-                        nodemcu_ip = None
-                        nodemcu_active_pc = None
+                        # STATUS failure does NOT mean the fixed-IP NodeMCU
+                        # is offline. STATUS responses can be dropped by the
+                        # ESP8266 while it is handling another TCP connection.
+                        # Keep the configured IP and let REQUEST be the real
+                        # connectivity/claim test.
+                        nodemcu_ip = NODEMCU_IP
             except Exception:
                 missed_status += 1
                 with node_lock:
                     owns_node = node_socket is not None
                 if missed_status >= MAX_MISSED_STATUS and not owns_node:
-                    nodemcu_ip = None
-                    nodemcu_active_pc = None
+                    # Keep fixed NodeMCU IP visible; do not falsely report
+                    # "offline" just because STATUS timed out.
+                    nodemcu_ip = NODEMCU_IP
 
         def refresh_button():
             active_pc = nodemcu_active_pc
