@@ -274,7 +274,7 @@ void loop() {
       client.setTimeout(1000);
       Serial.println("Trying TCP to " + pc->ip);
       if (client.connect(pc->ip.c_str(), 5000)) {
-        String msg = pc->name + ":" + String(minutes) + "\n";
+        String msg = pc->name + ":+" + String(minutes) + "\n";
         client.print(msg);
         client.stop();
         Serial.println("TCP SENT: " + msg);
