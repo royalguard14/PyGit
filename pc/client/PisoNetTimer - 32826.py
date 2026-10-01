@@ -243,7 +243,6 @@ def show_overlay():
         x_center = screen_w // 2
         y = 35
 
-        # Centered rounded badge
         text_width = max(260, len(PC_NAME) * 43)
         text_height = 78
         pad_x = 30
@@ -256,34 +255,46 @@ def show_overlay():
         badge_y2 = y + badge_h
         r = 28
 
-        # Tkinter canvas items cannot have independent alpha.
-        # Use a semi-transparent overlay window effect instead.
-        badge = tk.Frame(overlay, bg="white", bd=0, highlightthickness=0)
-        badge.place(x=badge_x1, y=badge_y1, width=badge_w, height=badge_h)
-
-        # Rounded visual treatment using nested frames
-        inner = tk.Frame(badge, bg="white", bd=0, highlightthickness=0)
-        inner.place(x=8, y=8, relwidth=1, relheight=1, width=-16, height=-16)
-
-        label = tk.Label(
-            inner,
-            text=PC_NAME,
-            font=font,
-            fg="white",
-            bg="white"
+        # White badge with stipple for a transparent/frosted look.
+        # Tkinter Canvas has no true per-item alpha, so gray25 makes
+        # approximately 75-80% of the background show through.
+        canvas.create_oval(
+            badge_x1, badge_y1, badge_x1 + r * 2, badge_y2,
+            fill="white", outline="black", width=3, stipple="gray25"
         )
-        label.pack(expand=True, padx=20, pady=4)
+        canvas.create_oval(
+            badge_x2 - r * 2, badge_y1, badge_x2, badge_y2,
+            fill="white", outline="black", width=3, stipple="gray25"
+        )
+        canvas.create_rectangle(
+            badge_x1 + r, badge_y1, badge_x2 - r, badge_y2,
+            fill="white", outline="black", width=3, stipple="gray25"
+        )
 
-        # Give the badge a polished outline and rounded-looking corners
-        badge.configure(highlightbackground="black", highlightcolor="black", highlightthickness=3)
+        # Decorative accent
+        canvas.create_oval(
+            badge_x1 + 18, badge_y1 + 18,
+            badge_x1 + 42, badge_y1 + 42,
+            fill="black", outline=""
+        )
 
-        # Fade the whole badge window area to approximately 80% opacity
-        # while keeping the slideshow visible around it.
-        try:
-            badge.attributes("-alpha", 0.80)
-        except:
-            pass
+        # PC name with black stroke/outline
+        stroke = 3
+        text_x = badge_x1 + 55
+        text_y = badge_y1 + pad_y
 
+        for dx, dy in [(-stroke, -stroke), (0, -stroke), (stroke, -stroke),
+                       (-stroke, 0),                    (stroke, 0),
+                       (-stroke, stroke),  (0, stroke),  (stroke, stroke)]:
+            canvas.create_text(
+                text_x + dx, text_y + dy,
+                text=PC_NAME, fill="black", font=font, anchor="nw"
+            )
+
+        canvas.create_text(
+            text_x, text_y,
+            text=PC_NAME, fill="white", font=font, anchor="nw"
+        )
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
 
