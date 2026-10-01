@@ -228,7 +228,17 @@ def get_nodemcu_status():
             print("[PYGIT] STATUS TCP connected", flush=True)
 
             sock.sendall(b"STATUS\n")
-            response = sock.recv(256).decode("utf-8", errors="ignore").strip()
+
+            # TCP is a stream. One recv() is NOT guaranteed to contain the
+            # complete NodeMCU response, so keep reading until the newline.
+            response_buffer = b""
+            while b"\n" not in response_buffer:
+                chunk = sock.recv(256)
+                if not chunk:
+                    break
+                response_buffer += chunk
+
+            response = response_buffer.decode("utf-8", errors="ignore").strip()
 
             print(
                 f"[PYGIT] STATUS response: {response!r}",
