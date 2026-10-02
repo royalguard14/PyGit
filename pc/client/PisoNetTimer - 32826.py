@@ -586,6 +586,10 @@ def receive_coin_from_nodemcu(minutes):
         daemon=True
     ).start()
 
+    # Show the 10-second countdown/progress bar after a coin is received.
+    # It stays hidden while waiting for the first coin.
+    global coin_window_visible
+    coin_window_visible = True
     reset_coin_window()
 
 
