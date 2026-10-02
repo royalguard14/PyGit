@@ -1103,6 +1103,63 @@ def countdown():
                 remaining_seconds -= 1
                 save_state()
 
+# ================= ALL CLIENT BROADCAST =================
+def handle_broadcast_command(data, addr):
+    global remaining_seconds
+
+    data = data.strip()
+    lower = data.lower()
+
+    m = re.match(r"^all:(\\+|\\-)(\\d+)$", data, re.I)
+    if m:
+        sign, minutes = m.groups()
+        minutes = int(minutes)
+
+        with lock:
+            if sign == "+":
+                remaining_seconds += minutes * 60
+            else:
+                remaining_seconds = max(0, remaining_seconds - minutes * 60)
+            save_state()
+
+        threading.Thread(target=log_to_google, args=(minutes,), daemon=True).start()
+        return "OK"
+
+    if lower == "all:shutdown":
+        return "SHUTDOWN"
+
+    if lower == "all:restart":
+        return "RESTART"
+
+    return "ERROR"
+
+
+def broadcast_server():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((HOST, DISCOVERY_PORT))
+        print(f"[PYGIT] ALL COMMAND SERVER listening on UDP {DISCOVERY_PORT}", flush=True)
+
+        while True:
+            data, addr = s.recvfrom(1024)
+            command = data.decode("utf-8", errors="ignore").strip()
+            result = handle_broadcast_command(command, addr)
+
+            if result == "SHUTDOWN":
+                s.sendto(b"SHUTDOWN", addr)
+                os.system("shutdown /s /t 1")
+            elif result == "RESTART":
+                s.sendto(b"RESTART", addr)
+                os.system("shutdown /r /t 1")
+            else:
+                s.sendto(result.encode("utf-8"), addr)
+
+    except OSError as e:
+        print(f"[PYGIT] ALL COMMAND SERVER ERROR: {type(e).__name__}: {e}", flush=True)
+    finally:
+        s.close()
+
 # ================= SERVER =================
 def handle_client(conn, addr):
     global remaining_seconds
@@ -1186,6 +1243,7 @@ load_state()
 
 # ================= START =================
 threading.Thread(target=server, daemon=True).start()
+threading.Thread(target=broadcast_server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
 threading.Thread(target=coin_window_loop, daemon=True).start()
 
