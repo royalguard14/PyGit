@@ -663,18 +663,13 @@ def request_receiving():
         coin_receiving = True
         coin_requesting = False
 
-        # Start the 10-second timeout in the background,
-        # but keep the countdown/progress bar hidden while receiving.
+        # Start the 10-second timeout and show the countdown/progress bar.
         coin_window_running = True
         coin_window_remaining = coin_window_seconds
         coin_window_deadline = time.monotonic() + coin_window_seconds
-        coin_window_visible = False
+        coin_window_visible = True
 
-        try:
-            root.after(0, lambda: coin_window_label.place_forget() if _widget_alive(coin_window_label) else None)
-            root.after(0, lambda: coin_progress_canvas.place_forget() if _widget_alive(coin_progress_canvas) else None)
-        except Exception:
-            pass
+        root.after(0, update_coin_window_display)
 
         root.after(0, lambda: insert_coin_button.config(
             text="STOP RECEIVING",
