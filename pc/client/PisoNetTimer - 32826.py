@@ -1110,7 +1110,7 @@ def handle_broadcast_command(data, addr):
     data = data.strip()
     lower = data.lower()
 
-    m = re.match(r"^all:(\\+|\\-)(\\d+)$", data, re.I)
+    m = re.match(r"^all:(\+|\-)(\d+)$", data, re.I)
     if m:
         sign, minutes = m.groups()
         minutes = int(minutes)
