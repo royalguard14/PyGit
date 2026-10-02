@@ -90,6 +90,7 @@ coin_window_running = False
 coin_window_deadline = 0.0
 coin_window_label = None
 coin_progress_canvas = None
+coin_window_frame = None
 status_label = None
 STATUS_FLASH_MS = 2500
 
@@ -446,31 +447,32 @@ def update_coin_window_display():
     if coin_window_label is None or coin_progress_canvas is None:
         return
 
-    value = max(0, coin_window_remaining)
-    ratio = min(1.0, value / float(coin_window_seconds))
+    remaining = max(0.0, coin_window_deadline - time.monotonic())
+    ratio = min(1.0, remaining / float(coin_window_seconds))
 
     def refresh():
-        if value > 0:
-            coin_window_label.config(text=f"INSERT COIN • {value}s")
-            coin_window_label.place(relx=0.5, rely=0.79, anchor="center")
+        if remaining > 0:
+            coin_window_label.config(text=f"INSERT COIN • {remaining:.1f}s")
+            coin_window_label.place(relx=0.5, rely=0.50, anchor="center")
 
-            coin_progress_canvas.place(relx=0.5, rely=0.84, anchor="center")
-            coin_progress_canvas.delete("bar")
-            width = 500
-            height = 28
-            fill_width = max(0, int(width * ratio))
+            coin_progress_canvas.place(relx=0.5, rely=0.57, anchor="center")
+            coin_progress_canvas.delete("all")
+
+            width = 600
+            height = 30
+            fill_width = int(width * ratio)
+
             coin_progress_canvas.create_rectangle(
                 0, 0, width, height,
                 fill="white",
                 outline="white",
-                tags="bar"
+                width=2
             )
             if fill_width > 0:
                 coin_progress_canvas.create_rectangle(
                     0, 0, fill_width, height,
                     fill="#22c55e",
-                    outline="#22c55e",
-                    tags="bar"
+                    outline="#22c55e"
                 )
         else:
             coin_window_label.config(text="")
@@ -692,7 +694,7 @@ def log_to_google(minutes):
 
 # ================= OVERLAY =================
 def show_overlay():
-    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label, coin_progress_canvas
+    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label, coin_progress_canvas, coin_window_frame
 
     if overlay_active:
         return
@@ -747,8 +749,8 @@ def show_overlay():
 
     coin_progress_canvas = tk.Canvas(
         overlay,
-        width=500,
-        height=28,
+        width=600,
+        height=30,
         bg="black",
         highlightthickness=2,
         highlightbackground="white"
