@@ -453,7 +453,7 @@ void handleControlServer() {
   WiFiClient newClient = controlServer.available();
   if (!newClient) return;
 
-  newClient.setTimeout(2);
+  newClient.setTimeout(1000);
   newClient.setNoDelay(true);
 
   String line = newClient.readStringUntil('\n');
@@ -464,6 +464,9 @@ void handleControlServer() {
   }
 
   // Control connections are always short-lived.
+  // Give the response time to leave the TCP buffer before closing.
+  newClient.flush();
+  delay(2);
   // The active PC is stored in NodeMCU state, not by keeping this socket open.
   newClient.stop();
 }
