@@ -940,6 +940,7 @@ def update_remaining_time_display():
             x = remaining_time_window.winfo_x() + event.x - remaining_time_window._drag_x
             y = remaining_time_window.winfo_y() + event.y - remaining_time_window._drag_y
             remaining_time_window.geometry(f"+{x}+{y}")
+            remaining_time_window._user_moved = True
 
         remaining_time_label.bind("<ButtonPress-1>", start_timer_drag)
         remaining_time_label.bind("<B1-Motion>", move_timer_drag)
@@ -960,17 +961,19 @@ def update_remaining_time_display():
     minutes, seconds = divmod(rem, 60)
     remaining_time_label.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
 
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    remaining_time_window.update_idletasks()
-    window_width = remaining_time_window.winfo_width()
-    window_height = remaining_time_window.winfo_height()
+    # Keep the player's chosen timer position instead of resetting it every update.
+    if not hasattr(remaining_time_window, "_user_moved"):
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        remaining_time_window.update_idletasks()
+        window_width = remaining_time_window.winfo_width()
+        window_height = remaining_time_window.winfo_height()
 
-    # Place the timer at the bottom-right, just above the Windows taskbar.
-    taskbar_offset = 55
-    remaining_time_window.geometry(
-        f"+{screen_width - window_width - 20}+{screen_height - window_height - taskbar_offset}"
-    )
+        # Initial position: bottom-right, just above the Windows taskbar.
+        taskbar_offset = 55
+        remaining_time_window.geometry(
+            f"+{screen_width - window_width - 20}+{screen_height - window_height - taskbar_offset}"
+        )
 
 # ================= TIMER =================
 # Cache shop status so the Tkinter main thread is never blocked by an NTP
