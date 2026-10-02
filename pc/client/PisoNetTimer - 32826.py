@@ -93,6 +93,7 @@ coin_progress_canvas = None
 coin_window_frame = None
 coin_window_visible = False
 status_label = None
+remaining_time_label = None
 STATUS_FLASH_MS = 2500
 
 # ================= TIME =================
@@ -730,7 +731,7 @@ def log_to_google(minutes):
 
 # ================= OVERLAY =================
 def show_overlay():
-    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label, coin_progress_canvas, coin_window_frame
+    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label, coin_progress_canvas, coin_window_frame, remaining_time_label
 
     if overlay_active:
         return
@@ -772,6 +773,18 @@ def show_overlay():
     )
     status_label.place(relx=0.02, rely=0.96, anchor="sw")
 
+    # Remaining PC usage time at the top-right.
+    remaining_time_label = tk.Label(
+        overlay,
+        text="00:00:00",
+        font=("Arial", 32, "bold"),
+        bg="black",
+        fg="white",
+        padx=12,
+        pady=6
+    )
+    remaining_time_label.place(relx=0.98, rely=0.03, anchor="ne")
+
     coin_window_label = tk.Label(
         overlay,
         text="",
@@ -798,6 +811,23 @@ def show_overlay():
     globals()["coin_window_label"] = coin_window_label
     globals()["coin_progress_canvas"] = coin_progress_canvas
     globals()["status_label"] = status_label
+    globals()["remaining_time_label"] = remaining_time_label
+
+    def update_remaining_time():
+        try:
+            if not _widget_alive(remaining_time_label):
+                return
+            with lock:
+                total = max(0, int(remaining_seconds))
+            hours, rem = divmod(total, 3600)
+            minutes, seconds = divmod(rem, 60)
+            remaining_time_label.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+            if overlay_active:
+                root.after(1000, update_remaining_time)
+        except tk.TclError:
+            return
+
+    update_remaining_time()
 
     def slide():
         global slide_index
@@ -875,18 +905,6 @@ def show_overlay():
         canvas.create_text(
             center_x, center_y,
             text=PC_NAME, fill="white", font=font, anchor="center"
-        )
-
-        # Current Philippine time at the top-right.
-        now_text = datetime.now(TIMEZONE).strftime("%I:%M:%S %p")
-        clock_x = overlay.winfo_screenwidth() - 35
-        clock_y = 35
-        canvas.create_text(
-            clock_x, clock_y,
-            text=now_text,
-            fill="white",
-            font=("Arial", 32, "bold"),
-            anchor="ne"
         )
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
