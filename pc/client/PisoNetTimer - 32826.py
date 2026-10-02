@@ -620,6 +620,7 @@ def handle_coin_receiver_connection(conn):
                 # Direct NodeMCU coin protocol: PC_NAME:+minutes
                 m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)(\d+)$", line, re.I)
                 if m:
+                    print(f"[PYGIT] COIN RECEIVED FROM COINSLOT: {line!r}", flush=True)
                     sign, minutes = m.groups()
                     minutes = int(minutes)
 
