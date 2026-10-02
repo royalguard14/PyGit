@@ -508,9 +508,15 @@ def stop_coin_window():
     coin_window_running = False
     coin_window_remaining = 0
     coin_window_deadline = 0.0
-    if coin_window_label is not None:
-        try: root.after(0, lambda: coin_window_label.config(text=""))
-        except Exception: pass
+
+    # Stop receiving immediately and hide both the countdown and progress bar.
+    try:
+        if coin_window_label is not None:
+            root.after(0, lambda: coin_window_label.place_forget())
+        if coin_progress_canvas is not None:
+            root.after(0, lambda: coin_progress_canvas.place_forget())
+    except Exception:
+        pass
 
 
 def coin_window_loop():
@@ -627,14 +633,10 @@ def request_receiving():
         coin_receiving = True
         coin_requesting = False
 
-        # Start receiving without showing the 10-second countdown.
-        coin_window_running = False
-        coin_window_remaining = 0
-        try:
-            root.after(0, lambda: coin_window_label.place_forget() if coin_window_label else None)
-            root.after(0, lambda: coin_progress_canvas.place_forget() if coin_progress_canvas else None)
-        except Exception:
-            pass
+        # Start the normal 10-second coin window.
+        # The countdown/progress bar stays visible until a coin arrives,
+        # STOP RECEIVING is pressed, or the 10 seconds expire.
+        start_coin_window()
 
         root.after(0, lambda: insert_coin_button.config(
             text="STOP RECEIVING",
