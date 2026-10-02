@@ -725,10 +725,11 @@ def handle_coin_socket(conn):
 
 # ================= LOGGING =================
 def log_to_google(minutes):
+    ip = get_local_ip()
     try:
         requests.post(
             GOOGLE_SCRIPT_URL,
-            json={"pc": PC_NAME, "minutes": minutes},
+            json={"pc": PC_NAME, "minutes": minutes, "source": "Client", "ip":ip},
             timeout=5
         )
     except:
