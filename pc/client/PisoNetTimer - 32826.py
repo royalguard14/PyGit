@@ -511,4 +511,401 @@ def coin_window_loop():
                 daemon=True
             ).start()
 
+def receive_coin_from_nodemcu(minutes):
+    global remaining_seconds
 
+    if not coin_receiving:
+        return
+
+    with lock:
+        remaining_seconds += minutes * 60
+        save_state()
+
+    threading.Thread(
+        target=log_to_google,
+        args=(minutes,),
+        daemon=True
+    ).start()
+
+    reset_coin_window()
+
+
+def handle_coin_receiver_connection(conn):
+    """Receive direct PisoNetTimer messages such as PC1:+10."""
+    global coin_receiving
+
+    try:
+        conn.settimeout(None)
+        buffer = ""
+
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+
+            buffer += data.decode("utf-8", errors="ignore")
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                # Direct NodeMCU coin protocol: PC_NAME:+minutes
+                m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)(\d+)$", line, re.I)
+                if m:
+                    sign, minutes = m.groups()
+                    minutes = int(minutes)
+
+                    if sign == "+":
+                        receive_coin_from_nodemcu(minutes)
+
+                    try:
+                        conn.sendall(b"OK\n")
+                    except OSError:
+                        pass
+                    continue
+
+                # Ignore unrelated data on the same timer port.
+                try:
+                    conn.sendall(b"ERROR\n")
+                except OSError:
+                    pass
+
+    except OSError:
+        pass
+
+
+def request_receiving():
+    global coin_requesting, coin_receiving
+
+    print(f"[PYGIT] Insert Coin clicked by {PC_NAME}", flush=True)
+
+    try:
+        accepted = request_nodemcu()
+    except Exception as e:
+        print(f"[PYGIT] Insert Coin ERROR: {type(e).__name__}: {e}", flush=True)
+        flash_nodemcu_status(f"ERROR: {type(e).__name__}: {e}")
+        accepted = False
+
+    if accepted:
+        coin_receiving = True
+        coin_requesting = False
+        start_coin_window()
+
+        root.after(0, lambda: insert_coin_button.config(
+            text="STOP RECEIVING",
+            state="normal"
+        ))
+
+        threading.Thread(target=coin_heartbeat, daemon=True).start()
+        return
+
+    coin_receiving = False
+    coin_requesting = False
+
+    if nodemcu_active_pc and nodemcu_active_pc not in ("NONE", "", PC_NAME):
+        flash_nodemcu_status(f"{nodemcu_active_pc} is connected")
+    else:
+        flash_nodemcu_status(f"Cannot connect/claim NodeMCU at {NODEMCU_IP}:{NODEMCU_PORT}")
+
+    root.after(0, lambda: insert_coin_button.config(
+        text="Insert Coin",
+        state="normal"
+    ))
+
+
+def toggle_coin_receiving():
+    global coin_requesting, coin_receiving
+
+    if coin_receiving:
+        coin_receiving = False
+        stop_coin_window()
+        threading.Thread(target=release_from_nodemcu, daemon=True).start()
+
+        insert_coin_button.config(
+            text="Insert Coin",
+            state="normal"
+        )
+        return
+
+    if coin_requesting:
+        return
+
+    coin_requesting = True
+    insert_coin_button.config(text="Connecting...", state="disabled")
+    threading.Thread(target=request_receiving, daemon=True).start()
+
+
+def handle_coin_socket(conn):
+    handle_coin_receiver_connection(conn)
+
+
+# ================= LOGGING =================
+def log_to_google(minutes):
+    try:
+        requests.post(GOOGLE_SCRIPT_URL, json={"pc": PC_NAME, "minutes": minutes}, timeout=5)
+    except:
+        pass
+
+# ================= OVERLAY =================
+def show_overlay():
+    global overlay, overlay_active, slide_index
+
+    if overlay_active:
+        return
+
+    overlay_active = True
+
+    overlay = tk.Toplevel()
+    overlay.attributes("-fullscreen", True)
+    overlay.attributes("-topmost", True)
+
+    canvas = tk.Canvas(overlay)
+    canvas.pack(fill="both", expand=True)
+
+    overlay.configure(cursor="arrow")
+
+    def insert_coin():
+        toggle_coin_receiving()
+
+    insert_coin_button = tk.Button(
+        overlay,
+        text="Insert Coin",
+        command=insert_coin,
+        font=("Arial", 24, "bold"),
+        padx=35,
+        pady=12,
+        cursor="hand2",
+        state="disabled"
+    )
+    insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
+
+    status_label = tk.Label(
+        overlay,
+        text="",
+        font=("Arial", 14, "bold"),
+        bg="black",
+        fg="white",
+        padx=12,
+        pady=5
+    )
+    status_label.place(relx=0.02, rely=0.96, anchor="sw")
+
+    coin_window_label = tk.Label(
+        overlay,
+        text="",
+        font=("Arial", 18, "bold"),
+        bg="black",
+        fg="white",
+        padx=18,
+        pady=8
+    )
+    coin_window_label.place_forget()
+
+    # Keep a reference for the coin receiver functions.
+    globals()["insert_coin_button"] = insert_coin_button
+    globals()["coin_window_label"] = coin_window_label
+    globals()["status_label"] = status_label
+
+    def slide():
+        global slide_index
+        canvas.delete("all")
+
+        if images:
+            try:
+                img = Image.open(images[slide_index]).resize((overlay.winfo_screenwidth(), overlay.winfo_screenheight()))
+                photo = ImageTk.PhotoImage(img)
+                canvas.image = photo
+                canvas.create_image(0, 0, image=photo, anchor="nw")
+                slide_index = (slide_index + 1) % len(images)
+            except:
+                pass
+
+        # PC name badge at the top-left, with PC name centered inside
+        font = ("Arial", 64, "bold")
+        x = 35
+        y = 30
+
+        text_width = max(260, len(PC_NAME) * 43)
+        text_height = 78
+        pad_x = 30
+        pad_y = 18
+        badge_w = text_width + (pad_x * 2) + 45
+        badge_h = text_height + (pad_y * 2)
+        badge_x1 = x
+        badge_y1 = y
+        badge_x2 = x + badge_w
+        badge_y2 = y + badge_h
+        r = 28
+
+        # Use a single rounded rectangle shape built from a polygon.
+        # This avoids the separate visible circles caused by overlapping ovals.
+        points = [
+            badge_x1 + r, badge_y1,
+            badge_x2 - r, badge_y1,
+            badge_x2, badge_y1 + r,
+            badge_x2, badge_y2 - r,
+            badge_x2 - r, badge_y2,
+            badge_x1 + r, badge_y2,
+            badge_x1, badge_y2 - r,
+            badge_x1, badge_y1 + r
+        ]
+
+        canvas.create_polygon(
+            points,
+            fill="white",
+            outline="black",
+            width=3,
+            stipple="gray25"
+        )
+
+        # Subtle decorative accent on the left
+        canvas.create_line(
+            badge_x1 + 18, badge_y1 + 20,
+            badge_x1 + 18, badge_y2 - 20,
+            fill="black",
+            width=5
+        )
+
+        # PC name centered inside the badge
+        center_x = (badge_x1 + badge_x2) // 2 + 10
+        center_y = (badge_y1 + badge_y2) // 2
+
+        stroke = 3
+        for dx, dy in [(-stroke, -stroke), (0, -stroke), (stroke, -stroke),
+                       (-stroke, 0),                    (stroke, 0),
+                       (-stroke, stroke),  (0, stroke),  (stroke, stroke)]:
+            canvas.create_text(
+                center_x + dx, center_y + dy,
+                text=PC_NAME, fill="black", font=font, anchor="center"
+            )
+
+        canvas.create_text(
+            center_x, center_y,
+            text=PC_NAME, fill="white", font=font, anchor="center"
+        )
+
+        overlay.after(SLIDE_INTERVAL * 1000, slide)
+
+    slide()
+    lock_input()
+    mute()
+
+
+def hide_overlay():
+    global overlay, overlay_active
+
+    if overlay:
+        overlay.destroy()
+
+    overlay_active = False
+    unlock_input()
+    unmute()
+
+# ================= TIMER =================
+def countdown():
+    global remaining_seconds
+    while True:
+        time.sleep(1)
+        with lock:
+            if remaining_seconds > 0:
+                remaining_seconds -= 1
+                save_state()
+
+# ================= SERVER =================
+def handle_client(conn, addr):
+    global remaining_seconds
+
+    try:
+        data = conn.recv(1024).decode().strip()
+
+        m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)(\d+)(:admin:(.+))?$", data, re.I)
+
+        if m:
+            sign, minutes, _, key = m.groups()
+            minutes = int(minutes)
+            if sign is None:
+                sign = "+"
+
+            is_admin_cmd = key == ADMIN_KEY
+
+            status, _ = get_shop_status()
+
+            if status == "TAMPERED":
+                conn.sendall(b"BLOCKED")
+                return
+
+            if status != "OPEN" and not is_admin_cmd:
+                conn.sendall(b"SHOP CLOSED")
+                return
+
+            with lock:
+                if sign == "+":
+                    remaining_seconds += minutes * 60
+                else:
+                    remaining_seconds = max(0, remaining_seconds - minutes * 60)
+
+                save_state()
+
+            threading.Thread(target=log_to_google, args=(minutes,), daemon=True).start()
+
+            conn.sendall(b"OK")
+            return
+
+        if data.lower() == f"{PC_NAME.lower()}:shutdown":
+            conn.sendall(b"SHUTDOWN")
+            os.system("shutdown /s /t 1")
+            return
+
+        if data.lower() == f"{PC_NAME.lower()}:restart":
+            conn.sendall(b"RESTART")
+            os.system("shutdown /r /t 1")
+            return
+
+        conn.sendall(b"ERROR")
+
+    except Exception:
+        traceback.print_exc()
+    finally:
+        conn.close()
+
+# ================= SERVER =================
+def server():
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((HOST, PORT))
+    s.listen(5)
+
+    while True:
+        c, a = s.accept()
+        threading.Thread(target=handle_client, args=(c, a), daemon=True).start()
+
+# ================= RECOVERY LOAD =================
+load_state()
+
+# ================= START =================
+threading.Thread(target=server, daemon=True).start()
+threading.Thread(target=countdown, daemon=True).start()
+threading.Thread(target=coin_window_loop, daemon=True).start()
+
+
+root = tk.Tk()
+root.withdraw()
+
+def update():
+    status, _ = get_shop_status()
+
+    with lock:
+        zero = remaining_seconds <= 0
+
+    if status != "OPEN" or zero:
+        show_overlay()
+    else:
+        hide_overlay()
+
+    root.after(1000, update)
+
+update()
+root.mainloop()
