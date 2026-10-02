@@ -923,11 +923,11 @@ def update_remaining_time_display():
         remaining_time_label = tk.Label(
             remaining_time_window,
             text="00:00:00",
-            font=("Arial", 32, "bold"),
+            font=("Arial", 16, "bold"),
             bg="black",
-            fg="white",
-            padx=12,
-            pady=6
+            fg="green",
+            padx=8,
+            pady=4
         )
         remaining_time_label.pack()
 
@@ -935,12 +935,12 @@ def update_remaining_time_display():
             remaining_time_window,
             text="Insert Coin",
             command=toggle_coin_receiving,
-            font=("Arial", 16, "bold"),
-            padx=20,
-            pady=6,
+            font=("Arial", 13, "bold"),
+            padx=12,
+            pady=4,
             cursor="hand2"
         )
-        remaining_insert_coin_button.pack(pady=(0, 8))
+        remaining_insert_coin_button.pack(pady=(0, 6))
         insert_coin_button = remaining_insert_coin_button
 
     hours, rem = divmod(total, 3600)
