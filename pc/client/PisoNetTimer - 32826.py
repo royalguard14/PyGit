@@ -768,17 +768,6 @@ def show_overlay():
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
 
-    status_label = tk.Label(
-        overlay,
-        text="",
-        font=("Arial", 14, "bold"),
-        bg="black",
-        fg="white",
-        padx=12,
-        pady=5
-    )
-    status_label.place(relx=0.02, rely=0.96, anchor="sw")
-
     coin_window_label = tk.Label(
         overlay,
         text="",
