@@ -883,20 +883,91 @@ def show_overlay():
             text=PC_NAME, fill="white", font=font, anchor="center"
         )
 
-        # PisoNet name and shop hours from C:/sufyan/detail.json
-        canvas.create_text(
-            35, 145,
-            text=PISONET_NAME,
+        # Shop information badge at the top-right.
+        def format_shop_time(value):
+            try:
+                hour, minute = map(int, value.split(":"))
+                suffix = "AM" if hour < 12 else "PM"
+                hour12 = hour % 12 or 12
+                return f"{hour12}:{minute:02d} {suffix}"
+            except:
+                return value
+
+        shop_open = format_shop_time(SHOP_TIME_OPEN)
+        shop_close = format_shop_time(SHOP_TIME_CLOSE)
+
+        shop_x2 = overlay.winfo_screenwidth() - 35
+        shop_x1 = shop_x2 - 430
+        shop_y1 = 30
+        shop_y2 = 180
+        shop_r = 24
+
+        shop_points = [
+            shop_x1 + shop_r, shop_y1,
+            shop_x2 - shop_r, shop_y1,
+            shop_x2, shop_y1 + shop_r,
+            shop_x2, shop_y2 - shop_r,
+            shop_x2 - shop_r, shop_y2,
+            shop_x1 + shop_r, shop_y2,
+            shop_x1, shop_y2 - shop_r,
+            shop_x1, shop_y1 + shop_r
+        ]
+
+        canvas.create_polygon(
+            shop_points,
             fill="white",
-            font=("Arial", 38, "bold"),
-            anchor="nw"
+            outline="black",
+            width=3,
+            stipple="gray25"
         )
-        canvas.create_text(
-            35, 195,
-            text=f"Shop Time: {SHOP_TIME_OPEN} - {SHOP_TIME_CLOSE}",
-            fill="white",
-            font=("Arial", 24, "bold"),
-            anchor="nw"
+
+        canvas.create_line(
+            shop_x1 + 18, shop_y1 + 18,
+            shop_x1 + 18, shop_y2 - 18,
+            fill="black",
+            width=5
+        )
+
+        shop_center_x = (shop_x1 + shop_x2) // 2 + 8
+
+        def stroked_text(x, y, text, font, fill="white", stroke="black", width=3):
+            for dx, dy in [
+                (-width, -width), (0, -width), (width, -width),
+                (-width, 0),                 (width, 0),
+                (-width, width),  (0, width),  (width, width)
+            ]:
+                canvas.create_text(
+                    x + dx, y + dy,
+                    text=text,
+                    fill=stroke,
+                    font=font,
+                    anchor="center"
+                )
+            canvas.create_text(
+                x, y,
+                text=text,
+                fill=fill,
+                font=font,
+                anchor="center"
+            )
+
+        stroked_text(
+            shop_center_x, shop_y1 + 48,
+            PISONET_NAME,
+            ("Arial", 34, "bold"),
+            width=3
+        )
+        stroked_text(
+            shop_center_x, shop_y1 + 92,
+            f"{shop_open} - {shop_close}",
+            ("Arial", 24, "bold"),
+            width=2
+        )
+        stroked_text(
+            shop_center_x, shop_y1 + 126,
+            "SHOP TIME",
+            ("Arial", 15, "bold"),
+            width=2
         )
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
