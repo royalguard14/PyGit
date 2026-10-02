@@ -1027,14 +1027,22 @@ def update_remaining_time_display():
 
         remaining_insert_coin_button = tk.Button(
             remaining_time_window,
-            text="Insert Coin",
+            text="INSERT COIN",
             command=toggle_coin_receiving,
             font=("Arial", 13, "bold"),
-            padx=12,
-            pady=4,
-            cursor="hand2"
+            padx=18,
+            pady=6,
+            cursor="hand2",
+            bg="#22c55e",
+            fg="white",
+            activebackground="#16a34a",
+            activeforeground="white",
+            relief="raised",
+            bd=3,
+            highlightthickness=1,
+            highlightbackground="white"
         )
-        remaining_insert_coin_button.pack(pady=(0, 6))
+        remaining_insert_coin_button.pack(pady=(0, 7))
         insert_coin_button = remaining_insert_coin_button
 
     hours, rem = divmod(total, 3600)
