@@ -94,6 +94,7 @@ coin_window_visible = False
 status_label = None
 remaining_time_label = None
 remaining_time_window = None
+remaining_insert_coin_button = None
 STATUS_FLASH_MS = 2500
 
 # ================= TIME =================
@@ -898,7 +899,7 @@ def hide_overlay():
 
 def update_remaining_time_display():
     """Show remaining PC usage time outside the overlay, at the top-right."""
-    global remaining_time_window, remaining_time_label
+    global remaining_time_window, remaining_time_label, remaining_insert_coin_button, insert_coin_button
 
     with lock:
         total = max(0, int(remaining_seconds))
@@ -929,6 +930,18 @@ def update_remaining_time_display():
             pady=6
         )
         remaining_time_label.pack()
+
+        remaining_insert_coin_button = tk.Button(
+            remaining_time_window,
+            text="Insert Coin",
+            command=toggle_coin_receiving,
+            font=("Arial", 16, "bold"),
+            padx=20,
+            pady=6,
+            cursor="hand2"
+        )
+        remaining_insert_coin_button.pack(pady=(0, 8))
+        insert_coin_button = remaining_insert_coin_button
 
     hours, rem = divmod(total, 3600)
     minutes, seconds = divmod(rem, 60)
