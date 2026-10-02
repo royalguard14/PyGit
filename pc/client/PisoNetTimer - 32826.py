@@ -512,4 +512,3 @@ def coin_window_loop():
             ).start()
 
 
-)
