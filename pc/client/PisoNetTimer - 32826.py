@@ -824,12 +824,9 @@ def show_overlay():
         x = 35
         y = 30
 
-        text_width = max(260, len(PC_NAME) * 43)
-        text_height = 78
-        pad_x = 30
-        pad_y = 18
-        badge_w = text_width + (pad_x * 2) + 45
-        badge_h = text_height + (pad_y * 2)
+        # Match the shop-info badge size.
+        badge_w = 430
+        badge_h = 150
         badge_x1 = x
         badge_y1 = y
         badge_x2 = x + badge_w
