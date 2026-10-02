@@ -95,6 +95,7 @@ status_label = None
 remaining_time_label = None
 remaining_time_window = None
 remaining_insert_coin_button = None
+remaining_timer_blink_state = False
 STATUS_FLASH_MS = 2500
 
 # ================= TIME =================
@@ -960,9 +961,18 @@ def update_remaining_time_display():
     hours, rem = divmod(total, 3600)
     minutes, seconds = divmod(rem, 60)
     remaining_time_label.config(
-        text=f"{hours:02d}:{minutes:02d}:{seconds:02d}",
-        fg="red" if total <= 60 else "green"
+        text=f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     )
+
+    global remaining_timer_blink_state
+    if total <= 60:
+        remaining_timer_blink_state = not remaining_timer_blink_state
+        remaining_time_label.config(
+            fg="red" if remaining_timer_blink_state else "black"
+        )
+    else:
+        remaining_timer_blink_state = False
+        remaining_time_label.config(fg="green")
 
     # Keep the player's chosen timer position instead of resetting it every update.
     if not hasattr(remaining_time_window, "_user_moved"):
