@@ -1025,13 +1025,23 @@ def handle_client(conn, addr):
 # ================= SERVER =================
 def server():
     s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((HOST, PORT))
-    s.listen(5)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((HOST, PORT))
+        s.listen(5)
+        print(f"[PYGIT] COIN SERVER listening on {HOST}:{PORT}", flush=True)
+    except OSError as e:
+        print(f"[PYGIT] COIN SERVER ERROR on {HOST}:{PORT}: {type(e).__name__}: {e}", flush=True)
+        return
 
     while True:
-        c, a = s.accept()
-        threading.Thread(target=handle_client, args=(c, a), daemon=True).start()
+        try:
+            c, a = s.accept()
+            print(f"[PYGIT] COIN SERVER connection from {a[0]}:{a[1]}", flush=True)
+            threading.Thread(target=handle_coin_receiver_connection, args=(c,), daemon=True).start()
+        except OSError as e:
+            print(f"[PYGIT] COIN SERVER accept ERROR: {type(e).__name__}: {e}", flush=True)
+            break
 
 # ================= RECOVERY LOAD =================
 load_state()
