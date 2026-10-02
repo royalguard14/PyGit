@@ -959,7 +959,10 @@ def update_remaining_time_display():
 
     hours, rem = divmod(total, 3600)
     minutes, seconds = divmod(rem, 60)
-    remaining_time_label.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+    remaining_time_label.config(
+        text=f"{hours:02d}:{minutes:02d}:{seconds:02d}",
+        fg="red" if total <= 60 else "green"
+    )
 
     # Keep the player's chosen timer position instead of resetting it every update.
     if not hasattr(remaining_time_window, "_user_moved"):
