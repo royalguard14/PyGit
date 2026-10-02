@@ -87,6 +87,7 @@ node_lock = threading.Lock()
 coin_window_seconds = 10
 coin_window_remaining = 0
 coin_window_running = False
+coin_window_deadline = 0.0
 coin_window_label = None
 coin_progress_canvas = None
 status_label = None
@@ -483,27 +484,30 @@ def update_coin_window_display():
 
 
 def start_coin_window():
-    global coin_window_running, coin_window_remaining
+    global coin_window_running, coin_window_remaining, coin_window_deadline
 
     coin_window_running = True
     coin_window_remaining = coin_window_seconds
+    coin_window_deadline = time.monotonic() + coin_window_seconds
     update_coin_window_display()
 
 
 def reset_coin_window():
-    global coin_window_running, coin_window_remaining
+    global coin_window_running, coin_window_remaining, coin_window_deadline
 
     if coin_receiving:
         coin_window_running = True
         coin_window_remaining = coin_window_seconds
+        coin_window_deadline = time.monotonic() + coin_window_seconds
         update_coin_window_display()
 
 
 def stop_coin_window():
-    global coin_window_running, coin_window_remaining
+    global coin_window_running, coin_window_remaining, coin_window_deadline
 
     coin_window_running = False
     coin_window_remaining = 0
+    coin_window_deadline = 0.0
     if coin_window_label is not None:
         try: root.after(0, lambda: coin_window_label.config(text=""))
         except Exception: pass
@@ -512,31 +516,23 @@ def stop_coin_window():
 def coin_window_loop():
     global coin_receiving, coin_window_running, coin_window_remaining
 
-    last_tick = time.monotonic()
-
     while True:
         time.sleep(0.1)
 
         if not coin_window_running:
-            last_tick = time.monotonic()
             continue
 
         if not coin_receiving:
             stop_coin_window()
-            last_tick = time.monotonic()
             continue
 
-        now = time.monotonic()
-        elapsed = now - last_tick
-        if elapsed >= 0.1:
-            coin_window_remaining = max(
-                0,
-                coin_window_remaining - int(elapsed)
-            )
-            last_tick = now
-            update_coin_window_display()
+        remaining = max(0.0, coin_window_deadline - time.monotonic())
+        coin_window_remaining = int(remaining + 0.999)
+        update_coin_window_display()
 
-        if coin_window_remaining <= 0:
+        if remaining <= 0:
+            coin_window_remaining = 0
+            update_coin_window_display()
             # No coin received for 10 seconds: Python owns the timeout and releases NodeMCU.
             coin_window_running = False
             coin_receiving = False
