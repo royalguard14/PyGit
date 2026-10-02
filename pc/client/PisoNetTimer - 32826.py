@@ -88,6 +88,7 @@ coin_window_seconds = 10
 coin_window_remaining = 0
 coin_window_running = False
 coin_window_label = None
+coin_progress_canvas = None
 status_label = None
 STATUS_FLASH_MS = 2500
 
@@ -441,18 +442,39 @@ def flash_nodemcu_status(message):
 
 
 def update_coin_window_display():
-    if coin_window_label is None:
+    if coin_window_label is None or coin_progress_canvas is None:
         return
 
     value = max(0, coin_window_remaining)
+    ratio = min(1.0, value / float(coin_window_seconds))
 
     def refresh():
         if value > 0:
-            coin_window_label.config(text=f"INSERT COIN WINDOW: {value}s")
-            coin_window_label.place(relx=0.5, rely=0.84, anchor="center")
+            coin_window_label.config(text=f"INSERT COIN • {value}s")
+            coin_window_label.place(relx=0.5, rely=0.79, anchor="center")
+
+            coin_progress_canvas.place(relx=0.5, rely=0.84, anchor="center")
+            coin_progress_canvas.delete("bar")
+            width = 500
+            height = 28
+            fill_width = max(0, int(width * ratio))
+            coin_progress_canvas.create_rectangle(
+                0, 0, width, height,
+                fill="white",
+                outline="white",
+                tags="bar"
+            )
+            if fill_width > 0:
+                coin_progress_canvas.create_rectangle(
+                    0, 0, fill_width, height,
+                    fill="#22c55e",
+                    outline="#22c55e",
+                    tags="bar"
+                )
         else:
             coin_window_label.config(text="")
             coin_window_label.place_forget()
+            coin_progress_canvas.place_forget()
 
     try:
         root.after(0, refresh)
@@ -490,18 +512,29 @@ def stop_coin_window():
 def coin_window_loop():
     global coin_receiving, coin_window_running, coin_window_remaining
 
+    last_tick = time.monotonic()
+
     while True:
-        time.sleep(1)
+        time.sleep(0.1)
 
         if not coin_window_running:
+            last_tick = time.monotonic()
             continue
 
         if not coin_receiving:
             stop_coin_window()
+            last_tick = time.monotonic()
             continue
 
-        coin_window_remaining -= 1
-        update_coin_window_display()
+        now = time.monotonic()
+        elapsed = now - last_tick
+        if elapsed >= 0.1:
+            coin_window_remaining = max(
+                0,
+                coin_window_remaining - int(elapsed)
+            )
+            last_tick = now
+            update_coin_window_display()
 
         if coin_window_remaining <= 0:
             # No coin received for 10 seconds: Python owns the timeout and releases NodeMCU.
@@ -663,7 +696,7 @@ def log_to_google(minutes):
 
 # ================= OVERLAY =================
 def show_overlay():
-    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label
+    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label, coin_progress_canvas
 
     if overlay_active:
         return
@@ -712,13 +745,24 @@ def show_overlay():
         bg="black",
         fg="white",
         padx=18,
-        pady=8
+        pady=6
     )
     coin_window_label.place_forget()
 
-    # Keep a reference for the coin receiver functions.
+    coin_progress_canvas = tk.Canvas(
+        overlay,
+        width=500,
+        height=28,
+        bg="black",
+        highlightthickness=2,
+        highlightbackground="white"
+    )
+    coin_progress_canvas.place_forget()
+
+    # Keep references for the coin receiver functions.
     globals()["insert_coin_button"] = insert_coin_button
     globals()["coin_window_label"] = coin_window_label
+    globals()["coin_progress_canvas"] = coin_progress_canvas
     globals()["status_label"] = status_label
 
     def slide():
