@@ -168,6 +168,9 @@ else:
     data = {}
 
 PC_NAME = data.get("PcName", PC_NAME)
+PISONET_NAME = data.get("pisonetName", "PisoNet")
+SHOP_TIME_OPEN = data.get("time_open", "00:00")
+SHOP_TIME_CLOSE = data.get("time_close", "24:00")
 
 # ================= LOAD IMAGES =================
 if os.path.exists(IMAGE_FOLDER):
@@ -878,6 +881,22 @@ def show_overlay():
         canvas.create_text(
             center_x, center_y,
             text=PC_NAME, fill="white", font=font, anchor="center"
+        )
+
+        # PisoNet name and shop hours from C:/sufyan/detail.json
+        canvas.create_text(
+            35, 145,
+            text=PISONET_NAME,
+            fill="white",
+            font=("Arial", 38, "bold"),
+            anchor="nw"
+        )
+        canvas.create_text(
+            35, 195,
+            text=f"Shop Time: {SHOP_TIME_OPEN} - {SHOP_TIME_CLOSE}",
+            fill="white",
+            font=("Arial", 24, "bold"),
+            anchor="nw"
         )
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
