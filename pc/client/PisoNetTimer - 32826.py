@@ -450,38 +450,33 @@ def update_coin_window_display():
     remaining = max(0.0, coin_window_deadline - time.monotonic())
     ratio = min(1.0, remaining / float(coin_window_seconds))
 
-    def refresh():
-        if remaining > 0 and coin_receiving:
-            coin_window_label.config(text=f"INSERT COIN • {remaining:.1f}s")
-            coin_window_label.place(relx=0.5, rely=0.50, anchor="center")
+    if remaining > 0 and coin_receiving:
+        coin_window_label.config(text=f"INSERT COIN • {remaining:.1f}s")
+        coin_window_label.place(relx=0.5, rely=0.50, anchor="center")
 
-            coin_progress_canvas.place(relx=0.5, rely=0.57, anchor="center")
-            coin_progress_canvas.delete("all")
+        coin_progress_canvas.place(relx=0.5, rely=0.57, anchor="center")
+        coin_progress_canvas.delete("all")
 
-            width = 600
-            height = 30
-            fill_width = int(width * ratio)
+        width = 600
+        height = 30
+        fill_width = int(width * ratio)
 
+        coin_progress_canvas.create_rectangle(
+            0, 0, width, height,
+            fill="white",
+            outline="white",
+            width=2
+        )
+        if fill_width > 0:
             coin_progress_canvas.create_rectangle(
-                0, 0, width, height,
-                fill="white",
-                outline="white",
-                width=2
+                0, 0, fill_width, height,
+                fill="#22c55e",
+                outline="#22c55e"
             )
-            if fill_width > 0:
-                coin_progress_canvas.create_rectangle(
-                    0, 0, fill_width, height,
-                    fill="#22c55e",
-                    outline="#22c55e"
-                )
-        else:
-            coin_window_label.place_forget()
-            coin_progress_canvas.place_forget()
+    else:
+        coin_window_label.place_forget()
+        coin_progress_canvas.place_forget()
 
-    try:
-        root.after(0, refresh)
-    except Exception:
-        pass
 
 def start_coin_window():
     global coin_window_running, coin_window_remaining, coin_window_deadline
@@ -489,7 +484,6 @@ def start_coin_window():
     coin_window_running = True
     coin_window_remaining = coin_window_seconds
     coin_window_deadline = time.monotonic() + coin_window_seconds
-    update_coin_window_display()
 
 
 def reset_coin_window():
@@ -499,7 +493,6 @@ def reset_coin_window():
         coin_window_running = True
         coin_window_remaining = coin_window_seconds
         coin_window_deadline = time.monotonic() + coin_window_seconds
-        update_coin_window_display()
 
 
 def stop_coin_window():
@@ -509,12 +502,12 @@ def stop_coin_window():
     coin_window_remaining = 0
     coin_window_deadline = 0.0
 
-    # Stop receiving immediately and hide both the countdown and progress bar.
+    # Hide both immediately on STOP.
     try:
         if coin_window_label is not None:
-            root.after(0, lambda: coin_window_label.place_forget())
+            coin_window_label.place_forget()
         if coin_progress_canvas is not None:
-            root.after(0, lambda: coin_progress_canvas.place_forget())
+            coin_progress_canvas.place_forget()
     except Exception:
         pass
 
@@ -523,7 +516,7 @@ def coin_window_loop():
     global coin_receiving, coin_window_running, coin_window_remaining
 
     while True:
-        time.sleep(0.1)
+        time.sleep(0.05)
 
         if not coin_window_running or not coin_receiving:
             continue
@@ -549,7 +542,10 @@ def coin_window_loop():
                 daemon=True
             ).start()
         else:
-            update_coin_window_display()
+            # Only schedule one UI update at a time. The old version queued
+            # hundreds of root.after() callbacks and caused lag/freezing.
+            root.after(0, update_coin_window_display)
+
 
 def receive_coin_from_nodemcu(minutes):
     global remaining_seconds
