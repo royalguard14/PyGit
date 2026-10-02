@@ -139,10 +139,11 @@ if not is_admin():
 # ================= PC NAME =================
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.connect(("8.8.8.8", 80))
-    ip = s.getsockname()[0]
-    s.close()
-    return ip
+    try:
+        s.connect((NODEMCU_IP, NODEMCU_PORT))
+        return s.getsockname()[0]
+    finally:
+        s.close()
 
 
 def get_pc_name():
@@ -302,6 +303,12 @@ def request_nodemcu():
     try:
         local_ip = get_local_ip()
         found = NODEMCU_IP
+
+        print(
+            f"[PYGIT] Connecting to NodeMCU {found}:{NODEMCU_PORT} "
+            f"from {local_ip}:{PORT}",
+            flush=True
+        )
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(COIN_REQUEST_TIMEOUT)
@@ -599,7 +606,11 @@ def request_receiving():
             state="normal"
         ))
 
-        threading.Thread(target=coin_heartbeat, daemon=True).start()
+        print(
+            f"[PYGIT] NodeMCU claimed successfully by {PC_NAME}. "
+            f"Waiting for coin on GPIO12.",
+            flush=True
+        )
         return
 
     coin_receiving = False
@@ -651,7 +662,7 @@ def log_to_google(minutes):
 
 # ================= OVERLAY =================
 def show_overlay():
-    global overlay, overlay_active, slide_index
+    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label
 
     if overlay_active:
         return
