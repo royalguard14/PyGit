@@ -948,10 +948,15 @@ def update_remaining_time_display():
     remaining_time_label.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
 
     screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
     remaining_time_window.update_idletasks()
     window_width = remaining_time_window.winfo_width()
+    window_height = remaining_time_window.winfo_height()
+
+    # Place the timer at the bottom-right, just above the Windows taskbar.
+    taskbar_offset = 55
     remaining_time_window.geometry(
-        f"+{screen_width - window_width - 20}+20"
+        f"+{screen_width - window_width - 20}+{screen_height - window_height - taskbar_offset}"
     )
 
 # ================= TIMER =================
