@@ -20,14 +20,10 @@ const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
 const unsigned long DEFAULT_TIME_PER_PULSE = 10;
 
-const unsigned long CONTROL_HEARTBEAT_MS = 3000;
-
 unsigned long lastCheck = 0;
 volatile unsigned long lastCoinInterrupt = 0;
 volatile bool coinPulseDetected = false;
 unsigned long timeInputPerPulse = DEFAULT_TIME_PER_PULSE;
-unsigned long lastControlHeartbeat = 0;
-unsigned long controlLostSince = 0;
 
 String wifiSSID, wifiPassword;
 ESP8266WebServer server(80);
@@ -38,7 +34,6 @@ IPAddress apGateway(192, 168, 4, 1);
 IPAddress apSubnet(255, 255, 255, 0);
 WiFiServer controlServer(CONTROL_PORT);
 
-WiFiClient controlClient;
 WiFiClient receiverClient;
 
 bool activeClient = false;
@@ -335,8 +330,6 @@ void clearActiveClient(const char* reason) {
   if (controlClient) controlClient.stop();
 
   activeClient = false;
-  lastControlHeartbeat = 0;
-  controlLostSince = 0;
   digitalWrite(TRIGGER_PIN, LOW);
   activePcName = "";
   activePcIP = IPAddress(0, 0, 0, 0);
@@ -368,6 +361,28 @@ void processRequest(const String& line, WiFiClient& client) {
 
   if (requestLine == "STATUS") {
     processStatus(client);
+    return;
+  }
+
+  if (requestLine.startsWith("RELEASE|")) {
+    String pcName = requestLine.substring(8);
+    pcName.trim();
+
+    if (!activeClient) {
+      client.println("RELEASED|NONE");
+      return;
+    }
+
+    if (pcName != activePcName) {
+      client.print("REJECTED|ACTIVE|");
+      client.println(activePcName);
+      return;
+    }
+
+    serialLog("RELEASE request from " + pcName);
+    client.print("RELEASED|");
+    client.println(activePcName);
+    clearActiveClient("Client requested release");
     return;
   }
 
@@ -447,70 +462,22 @@ void processRequest(const String& line, WiFiClient& client) {
 }
 
 void handleControlServer() {
-  if (activeClient) {
-    if (!controlClient || !controlClient.connected()) {
-      // The control channel is the ownership connection. If it is truly
-      // gone, release the stale claim so STATUS/REQUEST clients can connect
-      // again. Coin inactivity is still owned by PisoNetTimer; this only
-      // handles a dead control TCP connection.
-      clearActiveClient("Control connection lost");
-      // Continue below so the same loop can accept a new STATUS/REQUEST.
-    } else {
-      while (controlClient.available()) {
-        String line = controlClient.readStringUntil('\n');
-        line.trim();
-        if (line == "PING") {
-          serialLog("PING from " + activePcName + " -> PONG");
-          controlClient.println("PONG");
-          lastControlHeartbeat = millis();
-          continue;
-        }
-        if (line.startsWith("RELEASE|")) {
-          String pcName = line.substring(8);
-          pcName.trim();
-          if (pcName == activePcName) {
-            serialLog("RELEASE request from " + pcName);
-            controlClient.println("RELEASED|" + activePcName);
-            clearActiveClient("Client requested release");
-            return;
-          }
-        }
-      }
-      if (millis() - lastControlHeartbeat >= CONTROL_HEARTBEAT_MS * 2) {
-        controlClient.println("PONG");
-        lastControlHeartbeat = millis();
-      }
-    }
-
-    WiFiClient newClient = controlServer.available();
-    if (newClient) {
-      newClient.setTimeout(2);
-      newClient.setNoDelay(true);
-      String line = newClient.readStringUntil('\n');
-      line.trim();
-      if (line.length()) processRequest(line, newClient);
-      newClient.stop();
-    }
-    return;
-  }
-
   WiFiClient newClient = controlServer.available();
   if (!newClient) return;
 
   newClient.setTimeout(2);
   newClient.setNoDelay(true);
+
   String line = newClient.readStringUntil('\n');
   line.trim();
-  if (!line.length()) {
-    newClient.stop();
-    return;
+
+  if (line.length()) {
+    processRequest(line, newClient);
   }
 
-  processRequest(line, newClient);
-  if (!activeClient) {
-    delay(10);
-    newClient.stop();
-  }
+  // Control connections are always short-lived.
+  // The active PC is stored in NodeMCU state, not by keeping this socket open.
+  newClient.stop();
 }
 
 void handleCoinPulse() {
@@ -542,6 +509,7 @@ void handleCoinPulse() {
   receiverClient.print(activePcName);
   receiverClient.print(":+");
   receiverClient.println(timeInputPerPulse);
+  receiverClient.flush();
 }
 
 void setup() {
