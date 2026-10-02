@@ -726,7 +726,11 @@ def handle_coin_socket(conn):
 # ================= LOGGING =================
 def log_to_google(minutes):
     try:
-        requests.post(GOOGLE_SCRIPT_URL, json={"pc": PC_NAME, "minutes": minutes}, timeout=5)
+        requests.post(
+            GOOGLE_SCRIPT_URL,
+            json={"pc": PC_NAME, "minutes": minutes},
+            timeout=5
+        )
     except:
         pass
 
