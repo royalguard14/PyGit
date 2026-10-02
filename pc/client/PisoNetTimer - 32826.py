@@ -504,6 +504,7 @@ def coin_window_loop():
         update_coin_window_display()
 
         if coin_window_remaining <= 0:
+            # No coin received for 10 seconds: Python owns the timeout and releases NodeMCU.
             coin_window_running = False
             coin_receiving = False
 
