@@ -451,7 +451,7 @@ def update_coin_window_display():
     ratio = min(1.0, remaining / float(coin_window_seconds))
 
     def refresh():
-        if remaining > 0:
+        if remaining > 0 and coin_receiving:
             coin_window_label.config(text=f"INSERT COIN • {remaining:.1f}s")
             coin_window_label.place(relx=0.5, rely=0.50, anchor="center")
 
@@ -475,7 +475,6 @@ def update_coin_window_display():
                     outline="#22c55e"
                 )
         else:
-            coin_window_label.config(text="")
             coin_window_label.place_forget()
             coin_progress_canvas.place_forget()
 
@@ -483,7 +482,6 @@ def update_coin_window_display():
         root.after(0, refresh)
     except Exception:
         pass
-
 
 def start_coin_window():
     global coin_window_running, coin_window_remaining, coin_window_deadline
@@ -521,34 +519,31 @@ def coin_window_loop():
     while True:
         time.sleep(0.1)
 
-        if not coin_window_running:
-            continue
-
-        if not coin_receiving:
-            stop_coin_window()
+        if not coin_window_running or not coin_receiving:
             continue
 
         remaining = max(0.0, coin_window_deadline - time.monotonic())
         coin_window_remaining = int(remaining + 0.999)
-        update_coin_window_display()
 
         if remaining <= 0:
             coin_window_remaining = 0
-            update_coin_window_display()
-            # No coin received for 10 seconds: Python owns the timeout and releases NodeMCU.
             coin_window_running = False
             coin_receiving = False
 
-            # Do not enable Insert Coin until RELEASE has been sent.
             root.after(0, lambda: insert_coin_button.config(
                 text="Releasing...",
                 state="disabled"
             ))
 
+            root.after(0, lambda: coin_window_label.place_forget() if coin_window_label else None)
+            root.after(0, lambda: coin_progress_canvas.place_forget() if coin_progress_canvas else None)
+
             threading.Thread(
                 target=release_from_nodemcu,
                 daemon=True
             ).start()
+        else:
+            update_coin_window_display()
 
 def receive_coin_from_nodemcu(minutes):
     global remaining_seconds
