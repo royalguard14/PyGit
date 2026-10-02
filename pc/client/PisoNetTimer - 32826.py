@@ -678,7 +678,7 @@ def show_overlay():
         padx=35,
         pady=12,
         cursor="hand2",
-        state="disabled"
+        state="normal"
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
 
