@@ -15,6 +15,7 @@ const uint8_t TRIGGER_PIN = 14;
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
 const unsigned long COIN_DEBOUNCE_MS = 50;
+const unsigned long COIN_BATCH_WAIT_MS = 1000;
 
 const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
@@ -41,6 +42,8 @@ String activePcName = "";
 IPAddress activePcIP;
 uint16_t activePcPort = DEFAULT_PC_PORT;
 unsigned long sessionPulseCount = 0;
+unsigned long pendingPulseCount = 0;
+unsigned long lastBatchPulseTime = 0;
 
 void serialLog(const String& message) {
   Serial.print("[PYGIT] ");
@@ -335,6 +338,8 @@ void clearActiveClient(const char* reason) {
   activePcIP = IPAddress(0, 0, 0, 0);
   activePcPort = DEFAULT_PC_PORT;
   sessionPulseCount = 0;
+  pendingPulseCount = 0;
+  lastBatchPulseTime = 0;
 }
 
 bool connectToPCReceiver() {
@@ -483,28 +488,69 @@ void handleCoinPulse() {
   }
   interrupts();
 
-  if (!pulse) return;
-  if (!activeClient) {
-    serialLog("COIN pulse ignored: no active PC");
+  if (pulse) {
+    if (!activeClient) {
+      serialLog("COIN pulse ignored: no active PC");
+      return;
+    }
+
+    sessionPulseCount++;
+    pendingPulseCount++;
+    lastBatchPulseTime = millis();
+
+    serialLog("COIN pulse #" + String(sessionPulseCount) +
+              " -> batch count: " + String(pendingPulseCount));
+    digitalWrite(TRIGGER_PIN, HIGH);
+  }
+
+  if (!activeClient || pendingPulseCount == 0) return;
+
+  // Wait briefly after the last coin so a group of coins is sent as one credit.
+  if (millis() - lastBatchPulseTime < COIN_BATCH_WAIT_MS) return;
+
+  unsigned long totalMinutes = pendingPulseCount * timeInputPerPulse;
+  serialLog("COIN batch complete: " + String(pendingPulseCount) +
+            " pulse(s) -> " + activePcName + ":+" + String(totalMinutes) + " min");
+
+  WiFiClient coinClient;
+  coinClient.setNoDelay(true);
+
+  if (!coinClient.connect(activePcIP, activePcPort)) {
+    serialLog("Unable to connect to receiver for coin batch.");
+    clearActiveClient("PC receiver connection lost");
     return;
   }
 
-  sessionPulseCount++;
-  serialLog("COIN pulse #" + String(sessionPulseCount) + " -> " + activePcName + ":+" + String(timeInputPerPulse) + " min");
-  digitalWrite(TRIGGER_PIN, HIGH);
+  coinClient.print(activePcName);
+  coinClient.print(":+");
+  coinClient.println(totalMinutes);
+  coinClient.flush();
 
-  if (!receiverClient || !receiverClient.connected()) {
-    if (!connectToPCReceiver()) {
-      serialLog("Unable to reconnect to receiver.");
-      clearActiveClient("PC receiver connection lost");
-      return;
+  unsigned long waitStart = millis();
+  bool acknowledged = false;
+  while (millis() - waitStart < 2000) {
+    while (coinClient.available()) {
+      String response = coinClient.readStringUntil('\n');
+      response.trim();
+      if (response == "OK") {
+        acknowledged = true;
+        break;
+      }
     }
+    if (acknowledged) break;
+    delay(2);
   }
 
-  receiverClient.print(activePcName);
-  receiverClient.print(":+");
-  receiverClient.println(timeInputPerPulse);
-  receiverClient.flush();
+  coinClient.stop();
+
+  if (acknowledged) {
+    serialLog("COIN batch sent successfully: +" + String(totalMinutes) + " min");
+    pendingPulseCount = 0;
+    lastBatchPulseTime = 0;
+  } else {
+    serialLog("COIN batch sent, but no OK received.");
+    clearActiveClient("PC receiver did not acknowledge");
+  }
 }
 
 void setup() {
