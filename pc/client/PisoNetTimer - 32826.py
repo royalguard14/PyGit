@@ -931,6 +931,19 @@ def update_remaining_time_display():
         )
         remaining_time_label.pack()
 
+        # Allow the player to move the timer anywhere by dragging it.
+        def start_timer_drag(event):
+            remaining_time_window._drag_x = event.x
+            remaining_time_window._drag_y = event.y
+
+        def move_timer_drag(event):
+            x = remaining_time_window.winfo_x() + event.x - remaining_time_window._drag_x
+            y = remaining_time_window.winfo_y() + event.y - remaining_time_window._drag_y
+            remaining_time_window.geometry(f"+{x}+{y}")
+
+        remaining_time_label.bind("<ButtonPress-1>", start_timer_drag)
+        remaining_time_label.bind("<B1-Motion>", move_timer_drag)
+
         remaining_insert_coin_button = tk.Button(
             remaining_time_window,
             text="Insert Coin",
