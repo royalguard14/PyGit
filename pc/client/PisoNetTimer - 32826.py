@@ -362,6 +362,15 @@ def request_nodemcu():
             except OSError:
                 pass
 
+def _widget_alive(widget):
+    try:
+        return widget is not None and bool(widget.winfo_exists())
+    except tk.TclError:
+        return False
+    except Exception:
+        return False
+
+
 def release_from_nodemcu():
     global coin_receiving, coin_window_running, coin_window_remaining, nodemcu_active_pc
 
@@ -408,8 +417,8 @@ def release_from_nodemcu():
         root.after(0, lambda: insert_coin_button.config(
             text="Insert Coin",
             state="normal"
-        ))
-        root.after(0, lambda: status_label.config(text=""))
+        ) if _widget_alive(insert_coin_button) else None)
+        root.after(0, lambda: status_label.config(text="") if _widget_alive(status_label) else None)
     except Exception:
         pass
 
@@ -546,10 +555,10 @@ def coin_window_loop():
             root.after(0, lambda: insert_coin_button.config(
                 text="Releasing...",
                 state="disabled"
-            ))
+            ) if _widget_alive(insert_coin_button) else None)
 
-            root.after(0, lambda: coin_window_label.place_forget() if coin_window_label else None)
-            root.after(0, lambda: coin_progress_canvas.place_forget() if coin_progress_canvas else None)
+            root.after(0, lambda: coin_window_label.place_forget() if _widget_alive(coin_window_label) else None)
+            root.after(0, lambda: coin_progress_canvas.place_forget() if _widget_alive(coin_progress_canvas) else None)
 
             threading.Thread(
                 target=release_from_nodemcu,
@@ -651,8 +660,8 @@ def request_receiving():
         coin_window_visible = False
 
         try:
-            root.after(0, lambda: coin_window_label.place_forget() if coin_window_label else None)
-            root.after(0, lambda: coin_progress_canvas.place_forget() if coin_progress_canvas else None)
+            root.after(0, lambda: coin_window_label.place_forget() if _widget_alive(coin_window_label) else None)
+            root.after(0, lambda: coin_progress_canvas.place_forget() if _widget_alive(coin_progress_canvas) else None)
         except Exception:
             pass
 
@@ -679,7 +688,7 @@ def request_receiving():
     root.after(0, lambda: insert_coin_button.config(
         text="Insert Coin",
         state="normal"
-    ))
+    ) if _widget_alive(insert_coin_button) else None)
 
 
 def toggle_coin_receiving():
@@ -862,6 +871,18 @@ def show_overlay():
         canvas.create_text(
             center_x, center_y,
             text=PC_NAME, fill="white", font=font, anchor="center"
+        )
+
+        # Current Philippine time at the top-right.
+        now_text = datetime.now(TIMEZONE).strftime("%I:%M:%S %p")
+        clock_x = overlay.winfo_screenwidth() - 35
+        clock_y = 35
+        canvas.create_text(
+            clock_x, clock_y,
+            text=now_text,
+            fill="white",
+            font=("Arial", 32, "bold"),
+            anchor="ne"
         )
 
         overlay.after(SLIDE_INTERVAL * 1000, slide)
