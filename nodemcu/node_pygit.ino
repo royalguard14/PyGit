@@ -40,6 +40,7 @@ bool activeClient = false;
 String activePcName = "";
 IPAddress activePcIP;
 uint16_t activePcPort = DEFAULT_PC_PORT;
+unsigned long sessionPulseCount = 0;
 
 void serialLog(const String& message) {
   Serial.print("[PYGIT] ");
@@ -333,6 +334,7 @@ void clearActiveClient(const char* reason) {
   activePcName = "";
   activePcIP = IPAddress(0, 0, 0, 0);
   activePcPort = DEFAULT_PC_PORT;
+  sessionPulseCount = 0;
 }
 
 bool connectToPCReceiver() {
@@ -443,6 +445,7 @@ void processRequest(const String& line, WiFiClient& client) {
   activePcName = pcName;
   activePcIP = pcIP;
   activePcPort = pcPort;
+  sessionPulseCount = 0;
 
   serialLog("ACCEPTED: " + activePcName + " (" + activePcIP.toString() + ":" + String(activePcPort) + ")");
   client.print("ACCEPTED|");
@@ -486,7 +489,8 @@ void handleCoinPulse() {
     return;
   }
 
-  serialLog("COIN pulse -> " + activePcName + ":+" + String(timeInputPerPulse) + " min");
+  sessionPulseCount++;
+  serialLog("COIN pulse #" + String(sessionPulseCount) + " -> " + activePcName + ":+" + String(timeInputPerPulse) + " min");
   digitalWrite(TRIGGER_PIN, HIGH);
 
   if (!receiverClient || !receiverClient.connected()) {
