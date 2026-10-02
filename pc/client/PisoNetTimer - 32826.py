@@ -626,7 +626,15 @@ def request_receiving():
     if accepted:
         coin_receiving = True
         coin_requesting = False
-        start_coin_window()
+
+        # Start receiving without showing the 10-second countdown.
+        coin_window_running = False
+        coin_window_remaining = 0
+        try:
+            root.after(0, lambda: coin_window_label.place_forget() if coin_window_label else None)
+            root.after(0, lambda: coin_progress_canvas.place_forget() if coin_progress_canvas else None)
+        except Exception:
+            pass
 
         root.after(0, lambda: insert_coin_button.config(
             text="STOP RECEIVING",
