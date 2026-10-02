@@ -94,6 +94,7 @@ coin_window_frame = None
 coin_window_visible = False
 status_label = None
 remaining_time_label = None
+remaining_time_window = None
 STATUS_FLASH_MS = 2500
 
 # ================= TIME =================
@@ -731,7 +732,7 @@ def log_to_google(minutes):
 
 # ================= OVERLAY =================
 def show_overlay():
-    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label, coin_progress_canvas, coin_window_frame, remaining_time_label
+    global overlay, overlay_active, slide_index, insert_coin_button, status_label, coin_window_label, coin_progress_canvas, coin_window_frame
 
     if overlay_active:
         return
@@ -773,18 +774,6 @@ def show_overlay():
     )
     status_label.place(relx=0.02, rely=0.96, anchor="sw")
 
-    # Remaining PC usage time at the top-right.
-    remaining_time_label = tk.Label(
-        overlay,
-        text="00:00:00",
-        font=("Arial", 32, "bold"),
-        bg="black",
-        fg="white",
-        padx=12,
-        pady=6
-    )
-    remaining_time_label.place(relx=0.98, rely=0.03, anchor="ne")
-
     coin_window_label = tk.Label(
         overlay,
         text="",
@@ -811,24 +800,6 @@ def show_overlay():
     globals()["coin_window_label"] = coin_window_label
     globals()["coin_progress_canvas"] = coin_progress_canvas
     globals()["status_label"] = status_label
-    globals()["remaining_time_label"] = remaining_time_label
-
-    def update_remaining_time():
-        try:
-            if not _widget_alive(remaining_time_label):
-                return
-            with lock:
-                total = max(0, int(remaining_seconds))
-            hours, rem = divmod(total, 3600)
-            minutes, seconds = divmod(rem, 60)
-            remaining_time_label.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-            if overlay_active:
-                root.after(1000, update_remaining_time)
-        except tk.TclError:
-            return
-
-    update_remaining_time()
-
     def slide():
         global slide_index
         canvas.delete("all")
@@ -923,6 +894,52 @@ def hide_overlay():
     overlay_active = False
     unlock_input()
     unmute()
+
+
+def update_remaining_time_display():
+    """Show remaining PC usage time outside the overlay, at the top-right."""
+    global remaining_time_window, remaining_time_label
+
+    with lock:
+        total = max(0, int(remaining_seconds))
+
+    if total <= 0:
+        if remaining_time_window is not None:
+            try:
+                remaining_time_window.destroy()
+            except tk.TclError:
+                pass
+            remaining_time_window = None
+            remaining_time_label = None
+        return
+
+    if remaining_time_window is None or not _widget_alive(remaining_time_window):
+        remaining_time_window = tk.Toplevel(root)
+        remaining_time_window.overrideredirect(True)
+        remaining_time_window.attributes("-topmost", True)
+        remaining_time_window.configure(bg="black")
+
+        remaining_time_label = tk.Label(
+            remaining_time_window,
+            text="00:00:00",
+            font=("Arial", 32, "bold"),
+            bg="black",
+            fg="white",
+            padx=12,
+            pady=6
+        )
+        remaining_time_label.pack()
+
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    remaining_time_label.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+
+    screen_width = root.winfo_screenwidth()
+    remaining_time_window.update_idletasks()
+    window_width = remaining_time_window.winfo_width()
+    remaining_time_window.geometry(
+        f"+{screen_width - window_width - 20}+20"
+    )
 
 # ================= TIMER =================
 # Cache shop status so the Tkinter main thread is never blocked by an NTP
@@ -1034,9 +1051,23 @@ def update():
         zero = remaining_seconds <= 0
 
     if status != "OPEN" or zero:
+        # Overlay has no remaining-time display.
+        update_remaining_time_display()
         show_overlay()
+        # Hide the external timer while the overlay is active.
+        if remaining_time_window is not None:
+            try:
+                remaining_time_window.withdraw()
+            except tk.TclError:
+                pass
     else:
         hide_overlay()
+        if remaining_time_window is not None:
+            try:
+                remaining_time_window.deiconify()
+            except tk.TclError:
+                pass
+        update_remaining_time_display()
 
     root.after(1000, update)
 
