@@ -618,7 +618,7 @@ def handle_coin_receiver_connection(conn):
 
 
 def request_receiving():
-    global coin_requesting, coin_receiving
+    global coin_requesting, coin_receiving, coin_window_running, coin_window_remaining, coin_window_deadline
 
     print(f"[PYGIT] Insert Coin clicked by {PC_NAME}", flush=True)
 
@@ -633,10 +633,17 @@ def request_receiving():
         coin_receiving = True
         coin_requesting = False
 
-        # Start the normal 10-second coin window.
-        # The countdown/progress bar stays visible until a coin arrives,
-        # STOP RECEIVING is pressed, or the 10 seconds expire.
-        start_coin_window()
+        # Start the 10-second timeout in the background,
+        # but keep the countdown/progress bar hidden while receiving.
+        coin_window_running = True
+        coin_window_remaining = coin_window_seconds
+        coin_window_deadline = time.monotonic() + coin_window_seconds
+
+        try:
+            root.after(0, lambda: coin_window_label.place_forget() if coin_window_label else None)
+            root.after(0, lambda: coin_progress_canvas.place_forget() if coin_progress_canvas else None)
+        except Exception:
+            pass
 
         root.after(0, lambda: insert_coin_button.config(
             text="STOP RECEIVING",
