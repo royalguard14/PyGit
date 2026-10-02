@@ -124,13 +124,13 @@ def get_shop_status():
         return "TAMPERED", now
 
     current = now.hour * 60 + now.minute
-    open_time = OPEN_HOUR * 60 + OPEN_MINUTE
     close_time = CLOSE_HOUR * 60 + CLOSE_MINUTE
 
-    if current < open_time:
-        return "CLOSED_BEFORE", now
-    elif current >= close_time:
+    # Opening time is intentionally not enforced.
+    # The PC may be started at any time. Only closing time matters.
+    if current >= close_time:
         return "CLOSED_AFTER", now
+
     return "OPEN", now
 
 # ================= ADMIN =================
@@ -753,13 +753,21 @@ def show_overlay():
 
     insert_coin_button = tk.Button(
         overlay,
-        text="Insert Coin",
+        text="INSERT COIN",
         command=insert_coin,
         font=("Arial", 24, "bold"),
-        padx=35,
-        pady=12,
+        padx=48,
+        pady=16,
         cursor="hand2",
-        state="normal"
+        state="normal",
+        bg="#22c55e",
+        fg="white",
+        activebackground="#16a34a",
+        activeforeground="white",
+        relief="raised",
+        bd=4,
+        highlightthickness=2,
+        highlightbackground="white"
     )
     insert_coin_button.place(relx=0.5, rely=0.90, anchor="center")
 
