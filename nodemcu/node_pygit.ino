@@ -14,7 +14,7 @@ const uint8_t COIN_PIN = 12;
 const uint8_t TRIGGER_PIN = 14;
 const unsigned long WIFI_SETUP_WINDOW = 5000;
 const unsigned long CHECK_INTERVAL = 60000;
-const unsigned long COIN_DEBOUNCE_MS = 20;
+const unsigned long COIN_DEBOUNCE_MS = 50;
 
 const uint16_t CONTROL_PORT = 5001;
 const uint16_t DEFAULT_PC_PORT = 5000;
