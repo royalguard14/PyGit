@@ -867,6 +867,19 @@ def hide_overlay():
     unmute()
 
 # ================= TIMER =================
+# Cache shop status so the Tkinter main thread is never blocked by an NTP
+# network request while the coin countdown/progress bar is animating.
+_cached_shop_status = "OPEN"
+
+def refresh_shop_status():
+    global _cached_shop_status
+    try:
+        status, _ = get_shop_status()
+        _cached_shop_status = status
+    except Exception:
+        pass
+    root.after(30000, refresh_shop_status)
+
 def countdown():
     global remaining_seconds
     while True:
@@ -957,7 +970,7 @@ root = tk.Tk()
 root.withdraw()
 
 def update():
-    status, _ = get_shop_status()
+    status = _cached_shop_status
 
     with lock:
         zero = remaining_seconds <= 0
@@ -969,5 +982,6 @@ def update():
 
     root.after(1000, update)
 
+refresh_shop_status()
 update()
 root.mainloop()
