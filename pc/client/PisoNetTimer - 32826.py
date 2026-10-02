@@ -91,6 +91,7 @@ coin_window_deadline = 0.0
 coin_window_label = None
 coin_progress_canvas = None
 coin_window_frame = None
+coin_window_visible = False
 status_label = None
 STATUS_FLASH_MS = 2500
 
@@ -444,7 +445,14 @@ def flash_nodemcu_status(message):
 
 
 def update_coin_window_display():
+    if not coin_window_visible:
+        return
     if coin_window_label is None or coin_progress_canvas is None:
+        return
+    try:
+        if not coin_window_label.winfo_exists() or not coin_progress_canvas.winfo_exists():
+            return
+    except tk.TclError:
         return
 
     remaining = max(0.0, coin_window_deadline - time.monotonic())
@@ -479,28 +487,34 @@ def update_coin_window_display():
 
 
 def start_coin_window():
-    global coin_window_running, coin_window_remaining, coin_window_deadline
+    global coin_window_running, coin_window_remaining, coin_window_deadline, coin_window_visible
 
     coin_window_running = True
     coin_window_remaining = coin_window_seconds
     coin_window_deadline = time.monotonic() + coin_window_seconds
+    coin_window_visible = True
 
 
 def reset_coin_window():
-    global coin_window_running, coin_window_remaining, coin_window_deadline
+    global coin_window_running, coin_window_remaining, coin_window_deadline, coin_window_visible
 
     if coin_receiving:
         coin_window_running = True
         coin_window_remaining = coin_window_seconds
         coin_window_deadline = time.monotonic() + coin_window_seconds
+        # Keep the timer active, but do not force the UI visible while
+        # receiving if it was intentionally hidden.
+        if coin_window_visible:
+            update_coin_window_display()
 
 
 def stop_coin_window():
-    global coin_window_running, coin_window_remaining, coin_window_deadline
+    global coin_window_running, coin_window_remaining, coin_window_deadline, coin_window_visible
 
     coin_window_running = False
     coin_window_remaining = 0
     coin_window_deadline = 0.0
+    coin_window_visible = False
 
     # Hide both immediately on STOP.
     try:
@@ -614,7 +628,7 @@ def handle_coin_receiver_connection(conn):
 
 
 def request_receiving():
-    global coin_requesting, coin_receiving, coin_window_running, coin_window_remaining, coin_window_deadline
+    global coin_requesting, coin_receiving, coin_window_running, coin_window_remaining, coin_window_deadline, coin_window_visible
 
     print(f"[PYGIT] Insert Coin clicked by {PC_NAME}", flush=True)
 
@@ -634,6 +648,7 @@ def request_receiving():
         coin_window_running = True
         coin_window_remaining = coin_window_seconds
         coin_window_deadline = time.monotonic() + coin_window_seconds
+        coin_window_visible = False
 
         try:
             root.after(0, lambda: coin_window_label.place_forget() if coin_window_label else None)
