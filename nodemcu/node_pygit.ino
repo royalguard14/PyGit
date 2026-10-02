@@ -327,7 +327,6 @@ void startCoinServer() {
 void clearActiveClient(const char* reason) {
   serialLog("ACTIVE RELEASED: " + String(reason));
   if (receiverClient) receiverClient.stop();
-  if (controlClient) controlClient.stop();
 
   activeClient = false;
   digitalWrite(TRIGGER_PIN, LOW);
@@ -439,23 +438,12 @@ void processRequest(const String& line, WiFiClient& client) {
   }
 
   activeClient = true;
-  lastControlHeartbeat = millis();
   serialLog("CLAIMING NodeMCU for " + pcName + " -> GPIO14 HIGH");
-  controlLostSince = 0;
   digitalWrite(TRIGGER_PIN, HIGH);
   activePcName = pcName;
   activePcIP = pcIP;
   activePcPort = pcPort;
 
-  if (!connectToPCReceiver()) {
-    serialLog("PC receiver unreachable: " + pcIPText + ":" + String(pcPort));
-    client.println("REJECTED|PC_UNREACHABLE");
-    clearActiveClient("PC receiver unreachable");
-    return;
-  }
-
-  controlClient = client;
-  controlClient.setNoDelay(true);
   serialLog("ACCEPTED: " + activePcName + " (" + activePcIP.toString() + ":" + String(activePcPort) + ")");
   client.print("ACCEPTED|");
   client.println(activePcName);
