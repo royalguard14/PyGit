@@ -23,6 +23,9 @@ DISCOVERY_PORT = 5050
 
 IMAGE_FOLDER = "C:/sufyan"
 DETAIL_JSON = os.path.join(IMAGE_FOLDER, "detail.json")
+LOG_DIR = os.path.join(IMAGE_FOLDER, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "pisonetimer.log")
+LOG_LOCK = threading.RLock()
 
 SLIDE_INTERVAL = 5
 NODEMCU_IP = "192.168.1.23"
@@ -739,6 +742,17 @@ def handle_coin_socket(conn):
 
 
 # ================= LOGGING =================
+def write_log(message, level="INFO"):
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        stamp = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{stamp}] [{level}] [{PC_NAME}] {message}"
+        with LOG_LOCK:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except:
+        pass
+
 def log_to_google(minutes):
     ip = get_local_ip()
     try:
@@ -747,8 +761,9 @@ def log_to_google(minutes):
             json={"pc": PC_NAME, "minutes": minutes, "source": "Client", "ip":ip},
             timeout=5
         )
-    except:
-        pass
+        write_log(f"Google log sent: minutes={minutes}, ip={ip}")
+    except Exception as e:
+        write_log(f"Google log failed: {type(e).__name__}: {e}", "WARN")
 
 # ================= OVERLAY =================
 def show_overlay():
@@ -1141,6 +1156,7 @@ def apply_broadcast_command(command):
                 remaining_seconds = max(0, remaining_seconds - minutes * 60)
             save_state()
 
+        write_log(f"Broadcast command: {command}; remaining={remaining_seconds}s")
         threading.Thread(
             target=log_to_google,
             args=(minutes,),
@@ -1149,10 +1165,12 @@ def apply_broadcast_command(command):
         return
 
     if command.lower() == "all:shutdown":
+        write_log("Broadcast shutdown command received")
         os.system("shutdown /s /t 1")
         return
 
     if command.lower() == "all:restart":
+        write_log("Broadcast restart command received")
         os.system("shutdown /r /t 1")
         return
 
@@ -1187,6 +1205,22 @@ def broadcast_server():
             sock.close()
         except:
             pass
+
+# ================= UNINSTALL =================
+def start_uninstall():
+    helper = os.path.join(IMAGE_FOLDER, "uninstall_helper.exe")
+    if not os.path.exists(helper):
+        write_log("Uninstall helper not found", "ERROR")
+        return
+    try:
+        subprocess.Popen(
+            [helper, str(os.getpid()), IMAGE_FOLDER],
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            close_fds=True
+        )
+        write_log("Uninstall helper started")
+    except Exception as e:
+        write_log(f"Unable to start uninstall helper: {type(e).__name__}: {e}", "ERROR")
 
 # ================= SERVER =================
 def handle_client(conn, addr):
@@ -1223,19 +1257,28 @@ def handle_client(conn, addr):
 
                 save_state()
 
+            write_log(f"Direct command: {data}; remaining={remaining_seconds}s")
             threading.Thread(target=log_to_google, args=(minutes,), daemon=True).start()
 
             conn.sendall(b"OK")
             return
 
         if data.lower() == f"{PC_NAME.lower()}:shutdown":
+            write_log("Shutdown command received")
             conn.sendall(b"SHUTDOWN")
             os.system("shutdown /s /t 1")
             return
 
         if data.lower() == f"{PC_NAME.lower()}:restart":
+            write_log("Restart command received")
             conn.sendall(b"RESTART")
             os.system("shutdown /r /t 1")
+            return
+
+        if data.lower() == f"{PC_NAME.lower()}:uninstall":
+            write_log("Uninstall command received")
+            conn.sendall(b"UNINSTALL")
+            start_uninstall()
             return
 
         conn.sendall(b"ERROR")
@@ -1274,6 +1317,7 @@ threading.Thread(target=server, daemon=True).start()
 threading.Thread(target=broadcast_server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
 threading.Thread(target=coin_window_loop, daemon=True).start()
+write_log(f"PisoNetTimer started; version={VERSION}; TCP={HOST}:{PORT}; UDP={HOST}:{DISCOVERY_PORT}")
 
 
 root = tk.Tk()
