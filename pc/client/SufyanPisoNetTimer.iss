@@ -1,4 +1,4 @@
-# Sufyan PisoNetTimer installer
+; Sufyan PisoNetTimer installer
 #define AppName "Sufyan PisoNetTimer"
 #define AppVersion "1.0.0"
 
