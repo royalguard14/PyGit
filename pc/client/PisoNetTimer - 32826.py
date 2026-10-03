@@ -1,7 +1,7 @@
 VERSION = "1.4.2"
 
 # ================= IMPORTS =================
-import socket, sys, threading, re, tkinter as tk, time, os, json, requests
+import socket, sys, threading, re, tkinter as tk, time, os, json, requests, subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image, ImageTk
 import keyboard
@@ -43,8 +43,7 @@ CLOSE_HOUR = 22
 CLOSE_MINUTE = 30
 
 # ================= CRASH RECOVERY =================
-RECOVERY_FILE = "D:/recovery.json"
-os.makedirs(os.path.dirname(RECOVERY_FILE), exist_ok=True)
+RECOVERY_FILE = os.path.join(IMAGE_FOLDER, "recovery.json")
 
 def save_state():
     try:
@@ -171,6 +170,22 @@ PC_NAME = data.get("PcName", PC_NAME)
 PISONET_NAME = data.get("pisonetName", "PisoNet")
 SHOP_TIME_OPEN = data.get("time_open", "00:00")
 SHOP_TIME_CLOSE = data.get("time_close", "24:00")
+
+# Recovery storage is configurable per PC through detail.json.
+RECOVERY_FILE = os.path.expandvars(
+    os.path.normpath(
+        data.get("RECOVERY_FILE", os.path.join(IMAGE_FOLDER, "recovery.json"))
+    )
+)
+try:
+    recovery_dir = os.path.dirname(RECOVERY_FILE)
+    if recovery_dir:
+        os.makedirs(recovery_dir, exist_ok=True)
+    if not os.path.exists(RECOVERY_FILE):
+        with open(RECOVERY_FILE, "w") as f:
+            json.dump({"remaining": 0}, f)
+except:
+    pass
 
 # ================= LOAD IMAGES =================
 if os.path.exists(IMAGE_FOLDER):
@@ -1103,6 +1118,76 @@ def countdown():
                 remaining_seconds -= 1
                 save_state()
 
+
+# ================= LAN BROADCAST COMMANDS =================
+def apply_broadcast_command(command):
+    global remaining_seconds
+
+    command = command.strip()
+
+    m = re.match(r"^all:(\+|-)(\d+)$", command, re.I)
+    if m:
+        sign, minutes = m.groups()
+        minutes = int(minutes)
+
+        status, _ = get_shop_status()
+        if status == "TAMPERED":
+            return
+
+        with lock:
+            if sign == "+":
+                remaining_seconds += minutes * 60
+            else:
+                remaining_seconds = max(0, remaining_seconds - minutes * 60)
+            save_state()
+
+        threading.Thread(
+            target=log_to_google,
+            args=(minutes,),
+            daemon=True
+        ).start()
+        return
+
+    if command.lower() == "all:shutdown":
+        os.system("shutdown /s /t 1")
+        return
+
+    if command.lower() == "all:restart":
+        os.system("shutdown /r /t 1")
+        return
+
+
+def broadcast_server():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.bind((HOST, DISCOVERY_PORT))
+        print(
+            f"[PYGIT] BROADCAST SERVER listening on UDP {HOST}:{DISCOVERY_PORT}",
+            flush=True
+        )
+
+        while True:
+            data, addr = sock.recvfrom(1024)
+            command = data.decode("utf-8", errors="ignore").strip()
+            if command.lower().startswith("all:"):
+                print(
+                    f"[PYGIT] BROADCAST command from {addr[0]}: {command!r}",
+                    flush=True
+                )
+                apply_broadcast_command(command)
+    except OSError as e:
+        print(
+            f"[PYGIT] BROADCAST SERVER ERROR: {type(e).__name__}: {e}",
+            flush=True
+        )
+    finally:
+        try:
+            sock.close()
+        except:
+            pass
+
 # ================= SERVER =================
 def handle_client(conn, addr):
     global remaining_seconds
@@ -1186,6 +1271,7 @@ load_state()
 
 # ================= START =================
 threading.Thread(target=server, daemon=True).start()
+threading.Thread(target=broadcast_server, daemon=True).start()
 threading.Thread(target=countdown, daemon=True).start()
 threading.Thread(target=coin_window_loop, daemon=True).start()
 
