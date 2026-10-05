@@ -12,7 +12,7 @@ import win32ts
 SERVICE_NAME = "SufyanPisoNetTimer"
 DISPLAY_NAME = "Sufyan PisoNetTimer"
 APP_DIR = r"C:\sufyan"
-APP_EXE = os.path.join(APP_DIR, "PisoNetTimer - 32826.exe")
+APP_EXE = os.path.join(APP_DIR, "SufyanPisoNetTimer.exe")
 
 
 class SufyanPisoNetTimerService(win32serviceutil.ServiceFramework):
