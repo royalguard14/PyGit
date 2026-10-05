@@ -30,7 +30,7 @@ def main():
     run(["netsh", "advfirewall", "firewall", "delete", "rule",
          "name=Sufyan PisoNetTimer TCP 5000"])
     run(["netsh", "advfirewall", "firewall", "delete", "rule",
-         "name=Sufyan PisoNetTimer UDP 5050"])
+         "name=Sufyan PisoNetTimer UDP 5051"])
 
     script = os.path.join(tempfile.gettempdir(), "sufyan_pisonetimer_cleanup.cmd")
     this_pid = os.getpid()
