@@ -16,6 +16,10 @@ Copy-Item "dist\SufyanPisoNetTimerService.exe" $dist
 Copy-Item "dist\uninstall_helper.exe" $dist
 Copy-Item "sufyan\*" $dist -Force
 
-Write-Host "Release files prepared in: $dist"
+python -m PyInstaller --noconfirm --clean --onefile --console --name "SufyanPisoNetTimerInstaller" --add-binary "$dist\SufyanPisoNetTimer.exe;." --add-binary "$dist\SufyanPisoNetTimerService.exe;." --add-binary "$dist\uninstall_helper.exe;." --add-data "$dist\detail.json;." --add-data "$dist\wallpapersden.com_valorant-hd-gaming_1920x1080.jpg;." "installer.py"
 
-Copy-Item "install.ps1" $dist
+Copy-Item "dist\SufyanPisoNetTimerInstaller.exe" $dist
+
+Write-Host ""
+Write-Host "Release files prepared in: $dist"
+Write-Host "Installer: $dist\SufyanPisoNetTimerInstaller.exe"
