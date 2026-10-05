@@ -36,43 +36,90 @@ class SufyanPisoNetTimerService(win32serviceutil.ServiceFramework):
     def SvcDoRun(self):
         self._log("Service started")
         self._launch_app()
+
         while True:
             if win32event.WaitForSingleObject(self.hWaitStop, 5000) == win32event.WAIT_OBJECT_0:
                 break
 
             if self.process_handle is None:
                 self._launch_app()
-            else:
+                continue
+
+            try:
                 code = win32process.GetExitCodeProcess(self.process_handle)
-                if code != win32process.STILL_ACTIVE:
-                    self._log(f"Application exited with code {code}; restarting")
-                    self.process_handle = None
-                    self.process_id = None
-                    time.sleep(2)
-                    self._launch_app()
+            except Exception:
+                code = 0
+
+            if code != win32process.STILL_ACTIVE:
+                self._log(f"Application exited with code {code}; restarting")
+                self._close_process_handle()
+                time.sleep(2)
+                self._launch_app()
 
         self._log("Service stopped")
 
+    def _get_interactive_session(self):
+        # Prefer the active console session. During Windows boot/logon this
+        # can temporarily be unavailable, so fall back to any active session.
+        session_id = win32ts.WTSGetActiveConsoleSessionId()
+        if session_id != 0xFFFFFFFF:
+            try:
+                state = win32ts.WTSQuerySessionInformation(
+                    None,
+                    session_id,
+                    win32ts.WTSConnectState
+                )
+                if state == win32ts.WTSActive:
+                    return session_id
+            except Exception:
+                pass
+
+        try:
+            sessions = win32ts.WTSEnumerateSessions(None, 1, 0)
+            for session in sessions:
+                sid = session["SessionId"]
+                if session["State"] == win32ts.WTSActive:
+                    return sid
+        except Exception:
+            pass
+
+        return None
+
     def _launch_app(self):
+        if self.process_handle is not None:
+            try:
+                if win32process.GetExitCodeProcess(self.process_handle) == win32process.STILL_ACTIVE:
+                    return
+            except Exception:
+                pass
+            self._close_process_handle()
+
         if not os.path.exists(APP_EXE):
             self._log("Application EXE not found: " + APP_EXE)
             return
 
         token = None
         env = None
+
         try:
-            session_id = win32ts.WTSGetActiveConsoleSessionId()
-            if session_id == 0xFFFFFFFF:
-                self._log("No active console session")
+            session_id = self._get_interactive_session()
+            if session_id is None:
+                self._log("No active interactive session; retrying")
                 return
 
-            # WTSQueryUserToken returns a primary token for the active user.
-            # Use it directly with CreateProcessAsUser; no DuplicateTokenEx is needed.
-            token = win32ts.WTSQueryUserToken(session_id)
+            try:
+                token = win32ts.WTSQueryUserToken(session_id)
+            except Exception as e:
+                self._log(
+                    f"WTSQueryUserToken failed for session {session_id}: "
+                    f"{type(e).__name__}: {e}; retrying"
+                )
+                return
 
             env = win32profile.CreateEnvironmentBlock(token, False)
+
             startup = win32process.STARTUPINFO()
-            startup.lpDesktop = "winsta0\\default"
+            startup.lpDesktop = r"winsta0\default"
 
             flags = (
                 win32process.CREATE_UNICODE_ENVIRONMENT
@@ -82,7 +129,7 @@ class SufyanPisoNetTimerService(win32serviceutil.ServiceFramework):
             info = win32process.CreateProcessAsUser(
                 token,
                 None,
-                '"' + APP_EXE + '"',
+                f'"{APP_EXE}"',
                 None,
                 None,
                 False,
@@ -112,14 +159,22 @@ class SufyanPisoNetTimerService(win32serviceutil.ServiceFramework):
                 except Exception:
                     pass
 
+    def _close_process_handle(self):
+        if self.process_handle is not None:
+            try:
+                win32security.CloseHandle(self.process_handle)
+            except Exception:
+                pass
+        self.process_handle = None
+        self.process_id = None
+
     def _stop_app(self):
         if self.process_handle is not None:
             try:
                 win32process.TerminateProcess(self.process_handle, 0)
             except Exception:
                 pass
-            self.process_handle = None
-            self.process_id = None
+            self._close_process_handle()
 
     def _log(self, message):
         try:
