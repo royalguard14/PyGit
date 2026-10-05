@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import servicemanager
 import win32event
 import win32process
 import win32profile
@@ -129,4 +130,9 @@ class SufyanPisoNetTimerService(win32serviceutil.ServiceFramework):
 
 
 if __name__ == "__main__":
-    win32serviceutil.HandleCommandLine(SufyanPisoNetTimerService)
+    if len(sys.argv) == 1:
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(SufyanPisoNetTimerService)
+        servicemanager.StartServiceCtrlDispatcher()
+    else:
+        win32serviceutil.HandleCommandLine(SufyanPisoNetTimerService)
