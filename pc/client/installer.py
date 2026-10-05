@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
+import winreg
 
 INSTALL_DIR = r"C:\sufyan"
 APP_EXE = "SufyanPisoNetTimer.exe"
@@ -21,6 +22,32 @@ def copy_file(name):
     if not os.path.exists(src):
         raise FileNotFoundError(src)
     shutil.copy2(src, dst)
+
+
+def set_kiosk_policies():
+    path = r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"
+    key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, path)
+    for name, value in {
+        "NoClose": 1,
+        "NoLogoff": 1,
+        "NoSwitchUser": 1,
+        "NoStartMenuMorePrograms": 1,
+        "NoStartMenuMyGames": 1,
+        "NoStartMenuMyMusic": 1,
+        "NoStartMenuMyPictures": 1,
+        "NoStartMenuMyVideos": 1,
+        "NoRecentDocsMenu": 1,
+        "NoRecentDocsHistory": 1,
+    }.items():
+        winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
+    winreg.CloseKey(key)
+
+    path = r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"
+    key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, path)
+    winreg.SetValueEx(key, "DisableTaskMgr", 0, winreg.REG_DWORD, 1)
+    winreg.SetValueEx(key, "DisableLockWorkstation", 1, winreg.REG_DWORD, 1)
+    winreg.SetValueEx(key, "DisableChangePassword", 0, winreg.REG_DWORD, 1)
+    winreg.CloseKey(key)
 
 
 def run_netsh(args, check=True):
@@ -55,6 +82,7 @@ run_netsh([
 service_exe = os.path.join(INSTALL_DIR, SERVICE_EXE)
 subprocess.run([service_exe, "--startup", "auto", "install"], check=True)
 subprocess.run([service_exe, "start"], check=True)
+set_kiosk_policies()
 
 print(f"Sufyan PisoNetTimer installed successfully in {INSTALL_DIR}")
 print("Firewall rules added for TCP 5000 and UDP 5051.")
