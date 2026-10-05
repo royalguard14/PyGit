@@ -38,6 +38,7 @@ def set_kiosk_policies():
         "NoStartMenuMyVideos": 1,
         "NoRecentDocsMenu": 1,
         "NoRecentDocsHistory": 1,
+        "NoWinKeys": 1,
     }.items():
         winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
     winreg.CloseKey(key)
