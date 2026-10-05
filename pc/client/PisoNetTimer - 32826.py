@@ -37,7 +37,6 @@ IP_BASE = 100
 MAX_PC = 10
 
 GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxrlmAv0Sr7KWMIgLVi4RoA8CnLv7WxHUfgzfoF0IYVmzacJaIe7OBPrxn0zCXtYCp/exec"
-ADMIN_KEY = "7148"
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 OPEN_HOUR = 8
