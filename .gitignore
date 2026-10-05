@@ -7,3 +7,4 @@ pc/client/*.spec
 pc/client/build/
 pc/client/dist/
 pc/client/__pycache__/
+pc/client/release/
