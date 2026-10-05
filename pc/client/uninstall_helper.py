@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import winreg
 
 SERVICE_NAME = "SufyanPisoNetTimer"
 INSTALL_DIR = r"C:\sufyan"
@@ -17,6 +18,30 @@ def run(cmd):
     )
 
 
+def remove_kiosk_policies():
+    paths = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
+         ["NoClose", "NoLogoff", "NoSwitchUser", "NoStartMenuMorePrograms",
+          "NoStartMenuMyGames", "NoStartMenuMyMusic", "NoStartMenuMyPictures",
+          "NoStartMenuMyVideos", "NoRecentDocsMenu", "NoRecentDocsHistory", "NoWinKeys"]),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+         ["DisableTaskMgr", "DisableLockWorkstation", "DisableChangePassword"]),
+    ]
+    for hive, path, names in paths:
+        try:
+            key = winreg.OpenKey(hive, path, 0, winreg.KEY_SET_VALUE)
+            for name in names:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            winreg.CloseKey(key)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+
 def main():
     try:
         parent_pid = int(sys.argv[1])
@@ -26,6 +51,7 @@ def main():
     run(["sc", "stop", SERVICE_NAME])
     time.sleep(2)
     run(["sc", "delete", SERVICE_NAME])
+    remove_kiosk_policies()
 
     run(["netsh", "advfirewall", "firewall", "delete", "rule",
          "name=Sufyan PisoNetTimer TCP 5000"])
