@@ -15,63 +15,133 @@ DISPLAY_NAME = "Sufyan PisoNetTimer"
 APP_DIR = r"C:\sufyan"
 APP_EXE = os.path.join(APP_DIR, "SufyanPisoNetTimer.exe")
 
+
 class SufyanPisoNetTimerService(win32serviceutil.ServiceFramework):
     _svc_name_ = SERVICE_NAME
     _svc_display_name_ = DISPLAY_NAME
     _svc_description_ = "Sufyan PisoNetTimer application supervisor."
+
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.process_handle = None
         self.process_id = None
+
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        self._stop_app(); win32event.SetEvent(self.hWaitStop)
+        self._stop_app()
+        win32event.SetEvent(self.hWaitStop)
         self.ReportServiceStatus(win32service.SERVICE_STOPPED)
+
     def SvcDoRun(self):
-        self._log("Service started"); self._launch_app()
+        self._log("Service started")
+        self._launch_app()
         while True:
-            if win32event.WaitForSingleObject(self.hWaitStop, 5000) == win32event.WAIT_OBJECT_0: break
-            if self.process_handle is None: self._launch_app()
-            elif win32process.GetExitCodeProcess(self.process_handle) != win32process.STILL_ACTIVE:
-                self._log("Application exited; restarting"); self.process_handle=None; self.process_id=None; time.sleep(2); self._launch_app()
+            if win32event.WaitForSingleObject(self.hWaitStop, 5000) == win32event.WAIT_OBJECT_0:
+                break
+
+            if self.process_handle is None:
+                self._launch_app()
+            else:
+                code = win32process.GetExitCodeProcess(self.process_handle)
+                if code != win32process.STILL_ACTIVE:
+                    self._log(f"Application exited with code {code}; restarting")
+                    self.process_handle = None
+                    self.process_id = None
+                    time.sleep(2)
+                    self._launch_app()
+
         self._log("Service stopped")
+
     def _launch_app(self):
-        if not os.path.exists(APP_EXE): self._log("Application EXE not found: " + APP_EXE); return
-        token = primary = env = None
+        if not os.path.exists(APP_EXE):
+            self._log("Application EXE not found: " + APP_EXE)
+            return
+
+        token = None
+        env = None
         try:
             session_id = win32ts.WTSGetActiveConsoleSessionId()
-            if session_id == 0xFFFFFFFF: self._log("No active console session"); return
+            if session_id == 0xFFFFFFFF:
+                self._log("No active console session")
+                return
+
+            # WTSQueryUserToken returns a primary token for the active user.
+            # Use it directly with CreateProcessAsUser; no DuplicateTokenEx is needed.
             token = win32ts.WTSQueryUserToken(session_id)
-            primary = win32security.DuplicateTokenEx(token, win32security.SecurityImpersonation, 0x000F01FF, win32security.TokenPrimary, None)
-            env = win32profile.CreateEnvironmentBlock(primary, False)
-            startup = win32process.STARTUPINFO(); startup.lpDesktop = "winsta0\\default"
-            info = win32process.CreateProcessAsUser(primary, None, '"' + APP_EXE + '"', None, None, False, win32process.CREATE_UNICODE_ENVIRONMENT | win32process.CREATE_NEW_PROCESS_GROUP, env, APP_DIR, startup)
-            self.process_handle, self.process_id = info[0], info[2]
+
+            env = win32profile.CreateEnvironmentBlock(token, False)
+            startup = win32process.STARTUPINFO()
+            startup.lpDesktop = "winsta0\\default"
+
+            flags = (
+                win32process.CREATE_UNICODE_ENVIRONMENT
+                | win32process.CREATE_NEW_PROCESS_GROUP
+            )
+
+            info = win32process.CreateProcessAsUser(
+                token,
+                None,
+                '"' + APP_EXE + '"',
+                None,
+                None,
+                False,
+                flags,
+                env,
+                APP_DIR,
+                startup,
+            )
+
+            self.process_handle = info[0]
+            self.process_id = info[2]
             self._log(f"Application started; PID={self.process_id}")
-        except Exception as e: self._log(f"Application launch failed: {type(e).__name__}: {e}")
+
+        except Exception as e:
+            self._log(f"Application launch failed: {type(e).__name__}: {e}")
+
         finally:
             if env is not None:
-                try: win32profile.DestroyEnvironmentBlock(env)
-                except Exception: pass
+                try:
+                    win32profile.DestroyEnvironmentBlock(env)
+                except Exception:
+                    pass
+
             if token is not None:
-                try: win32security.CloseHandle(token)
-                except Exception: pass
-            if primary is not None:
-                try: win32security.CloseHandle(primary)
-                except Exception: pass
+                try:
+                    win32security.CloseHandle(token)
+                except Exception:
+                    pass
+
     def _stop_app(self):
         if self.process_handle is not None:
-            try: win32process.TerminateProcess(self.process_handle, 0)
-            except Exception: pass
-            self.process_handle = self.process_id = None
+            try:
+                win32process.TerminateProcess(self.process_handle, 0)
+            except Exception:
+                pass
+            self.process_handle = None
+            self.process_id = None
+
     def _log(self, message):
         try:
             os.makedirs(os.path.join(APP_DIR, "logs"), exist_ok=True)
-            with open(os.path.join(APP_DIR, "logs", "service.log"), "a", encoding="utf-8") as f: f.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + message + "\n")
-        except Exception: pass
+            with open(
+                os.path.join(APP_DIR, "logs", "service.log"),
+                "a",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    time.strftime("[%Y-%m-%d %H:%M:%S] ")
+                    + message
+                    + "\n"
+                )
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:
-        servicemanager.Initialize(); servicemanager.PrepareToHostSingle(SufyanPisoNetTimerService); servicemanager.StartServiceCtrlDispatcher()
-    else: win32serviceutil.HandleCommandLine(SufyanPisoNetTimerService)
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(SufyanPisoNetTimerService)
+        servicemanager.StartServiceCtrlDispatcher()
+    else:
+        win32serviceutil.HandleCommandLine(SufyanPisoNetTimerService)
