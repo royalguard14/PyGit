@@ -135,16 +135,6 @@ def get_shop_status():
 
     return "OPEN", now
 
-# ================= ADMIN =================
-def is_admin():
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        return False
-
-if not is_admin():
-    sys.exit()
-
 # ================= PC NAME =================
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1229,15 +1219,11 @@ def handle_client(conn, addr):
     try:
         data = conn.recv(1024).decode().strip()
 
-        m = re.match(rf"^{re.escape(PC_NAME)}:(\+|\-)(\d+)(:admin:(.+))?$", data, re.I)
+        m = re.match(rf"^{re.escape(PC_NAME)}:(\\+|\\-)(\\d+)$", data, re.I)
 
         if m:
-            sign, minutes, _, key = m.groups()
+            sign, minutes = m.groups()
             minutes = int(minutes)
-            if sign is None:
-                sign = "+"
-
-            is_admin_cmd = key == ADMIN_KEY
 
             status, _ = get_shop_status()
 
@@ -1245,7 +1231,7 @@ def handle_client(conn, addr):
                 conn.sendall(b"BLOCKED")
                 return
 
-            if status != "OPEN" and not is_admin_cmd:
+            if status != "OPEN":
                 conn.sendall(b"SHOP CLOSED")
                 return
 
