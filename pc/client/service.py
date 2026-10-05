@@ -66,7 +66,7 @@ class SufyanPisoNetTimerService(win32serviceutil.ServiceFramework):
             token = win32ts.WTSQueryUserToken(session_id)
             primary = win32security.DuplicateTokenEx(
                 token,
-                win32security.MAXIMUM_ALLOWED,
+                0x02000000,
                 None,
                 win32security.SecurityIdentification,
                 win32security.TokenPrimary
