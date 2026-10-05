@@ -53,7 +53,7 @@ run_netsh([
 ])
 
 service_exe = os.path.join(INSTALL_DIR, SERVICE_EXE)
-subprocess.run([service_exe, "install"], check=True)
+subprocess.run([service_exe, "--startup", "auto", "install"], check=True)
 subprocess.run([service_exe, "start"], check=True)
 
 print(f"Sufyan PisoNetTimer installed successfully in {INSTALL_DIR}")
