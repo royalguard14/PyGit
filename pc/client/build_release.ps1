@@ -17,3 +17,5 @@ Copy-Item "dist\uninstall_helper.exe" $dist
 Copy-Item "sufyan\*" $dist -Force
 
 Write-Host "Release files prepared in: $dist"
+
+Copy-Item "install.ps1" $dist
