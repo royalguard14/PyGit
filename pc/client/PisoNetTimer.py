@@ -39,10 +39,7 @@ MAX_PC = 10
 GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxrlmAv0Sr7KWMIgLVi4RoA8CnLv7WxHUfgzfoF0IYVmzacJaIe7OBPrxn0zCXtYCp/exec"
 TIMEZONE = pytz.timezone("Asia/Manila")
 
-OPEN_HOUR = 8
-OPEN_MINUTE = 0
-CLOSE_HOUR = 22
-CLOSE_MINUTE = 30
+# Shop hours are loaded from sufyan/detail.json below.
 
 # ================= CRASH RECOVERY =================
 RECOVERY_FILE = os.path.join(IMAGE_FOLDER, "recovery.json")
@@ -125,10 +122,15 @@ def get_shop_status():
         return "TAMPERED", now
 
     current = now.hour * 60 + now.minute
-    close_time = CLOSE_HOUR * 60 + CLOSE_MINUTE
 
     # Opening time is intentionally not enforced.
-    # The PC may be started at any time. Only closing time matters.
+    # The PC may be started at any time. Only closing time from detail.json matters.
+    try:
+        close_hour, close_minute = map(int, str(SHOP_TIME_CLOSE).split(":", 1))
+        close_time = close_hour * 60 + close_minute
+    except:
+        close_time = 24 * 60
+
     if current >= close_time:
         return "CLOSED_AFTER", now
 
