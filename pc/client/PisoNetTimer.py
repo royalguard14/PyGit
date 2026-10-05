@@ -207,7 +207,7 @@ def unmute():
         pass
 
 # ================= INPUT =================
-BLOCK_KEYS = ["tab", "esc", "windows"]
+BLOCK_KEYS = ["tab", "esc", "windows", "alt"]
 
 def lock_input():
     for k in BLOCK_KEYS:
@@ -766,6 +766,7 @@ def show_overlay():
     overlay_active = True
 
     overlay = tk.Toplevel()
+    overlay.overrideredirect(True)
     overlay.attributes("-fullscreen", True)
     overlay.attributes("-topmost", True)
 
@@ -1025,6 +1026,18 @@ def update_remaining_time_display():
         remaining_time_window.overrideredirect(True)
         remaining_time_window.attributes("-topmost", True)
         remaining_time_window.configure(bg="black")
+
+        # Remove the timer window from the Windows taskbar.
+        try:
+            hwnd = remaining_time_window.winfo_id()
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+            WS_EX_APPWINDOW = 0x00040000
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            style = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        except Exception:
+            pass
 
         remaining_time_label = tk.Label(
             remaining_time_window,
