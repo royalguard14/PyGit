@@ -45,7 +45,7 @@ def set_kiosk_policies():
     path = r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"
     key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, path)
     winreg.SetValueEx(key, "DisableTaskMgr", 0, winreg.REG_DWORD, 1)
-    winreg.SetValueEx(key, "DisableLockWorkstation", 1, winreg.REG_DWORD, 1)
+    winreg.SetValueEx(key, "DisableLockWorkstation", 0, winreg.REG_DWORD, 1)
     winreg.SetValueEx(key, "DisableChangePassword", 0, winreg.REG_DWORD, 1)
     winreg.CloseKey(key)
 
