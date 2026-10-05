@@ -19,7 +19,7 @@ import traceback
 # ================= CONFIG =================
 HOST = "0.0.0.0"
 PORT = 5000
-DISCOVERY_PORT = 5050
+DISCOVERY_PORT = 5051
 
 IMAGE_FOLDER = "C:/sufyan"
 DETAIL_JSON = os.path.join(IMAGE_FOLDER, "detail.json")
