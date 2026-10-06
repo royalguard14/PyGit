@@ -1,414 +1,648 @@
-# PyGit Project
+# PyGit / PisoNetTimer Project
 
-## Purpose
+## Current Project Status
 
-PyGit is the remote-update and deployment system for the PisoNet project.
+**STATUS: WORKING / OPERATIONAL**
 
-The goal is simple: install the client once, then control normal application updates from GitHub without manually visiting every client PC.
+The current PisoNetTimer deployment is already running successfully on the client PCs.
 
----
+The compiled Windows EXE client is working, users can already play on the PCs, and the **single physical coin slot** is being used to serve the active PC through the NodeMCU coin controller.
 
-# PisoNet Deployment Architecture
-
-```
-Developer PC
-│
-├── PisoNetTimer.py
-│       │
-│       └── PyInstaller
-│               ↓
-│       PisoNetClient.exe
-│
-└── Push release files to GitHub
-                │
-                ▼
-             GitHub
-                │
-                ▼
-          Client PC
-                │
-        PisoNetSetup.exe
-                │
-                ├── checks GitHub
-                ├── downloads latest PisoNetClient.exe
-                └── starts/updates client
-```
-
-The deployed client should not need Python, pip, PyInstaller, or manual module installation.
+The project is now in the **working production/test-deployment stage**, not the standalone-EXE planning stage.
 
 ---
 
-# Project Milestones
+# Current Working Architecture
 
-## Milestone 1 — Clean PisoNetTimer
+```
+                    ┌─────────────────────┐
+                    │      Android App    │
+                    │   Mobile Controller │
+                    └──────────┬──────────┘
+                               │
+                    TCP 5000 / UDP 5051
+                               │
+                               ▼
+┌───────────────┐      ┌─────────────────────┐
+│   Coin Slot   │─────▶│      NodeMCU        │
+│  ONE physical │      │  Active-PC control  │
+│   coin slot   │      └──────────┬──────────┘
+└───────────────┘                 │
+                                  │ TCP 5001
+                                  │ REQUEST / RELEASE
+                                  ▼
+                    ┌─────────────────────────┐
+                    │     PisoNetTimer.exe    │
+                    │       Client PC         │
+                    │                         │
+                    │ TCP 5000 command server │
+                    │ Fullscreen kiosk UI     │
+                    └─────────────────────────┘
 
-Completed cleanup:
+                    Multiple PCs can run
+                    PisoNetTimer.exe.
 
-- Removed crash recovery.
-- Removed `PC1:shutdown`.
-- Removed `PC1:restart`.
-- Removed admin-key commands such as `PC1:+10:admin:KEY`.
-- Kept normal timer commands such as `PC1:+10` and `PC1:-10`.
-- Kept NTP time checking and time-tampering protection.
-- Kept shop opening/closing schedule.
-- Kept fullscreen kiosk behavior.
-- Kept keyboard lock capability.
-- Kept mute/unmute capability.
-- Kept Google logging.
-- Kept automatic PC identification.
-- Kept single-instance protection.
-- Added the **INSERT COIN** manual/test button.
+                    NodeMCU controls which
+                    PC owns the single coin slot.
+```
 
 ---
 
-## Milestone 2 — Build PisoNetClient.exe
+# Working Components
 
-Current milestone.
+## 1. PisoNetTimer.exe
 
-Build the cleaned `PisoNetTimer.py` using PyInstaller.
+The main client application is compiled as a Windows EXE.
 
-Target:
+The client PC does **not** need Python or manual Python package installation.
 
-```
-PisoNetClient.exe
-```
+Current client responsibilities:
 
-The EXE must contain the required Python runtime and application dependencies.
+- Fullscreen PisoNet interface.
+- PC identification.
+- Shop name display.
+- Remaining-time countdown.
+- Insert Coin manual/test button.
+- Network time commands.
+- Single-instance protection.
+- NTP time checking.
+- Time-tampering protection.
+- Shop closing-time enforcement.
+- NodeMCU coin integration.
+- Google Sheet logging.
+- Windows kiosk behavior.
+- TCP command server on port **5000**.
+- Communication with NodeMCU on port **5001**.
 
-### Milestone 2 test
-
-1. Build the EXE.
-2. Copy the EXE to a test folder.
-3. Run it on the development PC.
-4. Verify fullscreen kiosk mode starts.
-5. Verify the PC name is displayed.
-6. Verify the timer is displayed.
-7. Verify **INSERT COIN** adds the test time.
-8. Verify normal network time addition works.
-9. Verify the fullscreen/locked behavior when time reaches zero.
-10. Verify shop open/close behavior.
-11. Verify NTP/time-tampering protection.
-12. Verify the EXE runs without manually installing the bundled modules.
-
-Do not move to the updater until the standalone EXE is working.
+The client EXE is already running successfully on deployed/test PCs.
 
 ---
 
-## Milestone 3 — Basic setup.py
+# 2. Windows Service
 
-`setup.py` will become the stable client installer/updater.
+The Windows Service is responsible for starting and supervising the PisoNet client.
 
-First-run flow:
+Current deployment uses:
 
 ```
-PisoNetSetup
-    ↓
-Check GitHub
-    ↓
-Read control.json
-    ↓
-Download latest PisoNetClient.exe
-    ↓
-Install to the designated PisoNet program folder
-    ↓
-Create Windows Firewall rule for TCP 5000
-    ↓
-Register Windows auto-start
-    ↓
-Run PisoNetClient.exe
+SufyanPisoNetTimerService.exe
+        ↓
+Windows Service
+        ↓
+PisoNetTimer.exe
 ```
 
-The client does not need Git, `git pull`, the PisoNet source code, or manual Python package installation.
+The service is installed with automatic startup.
 
-### Installer requirement
-
-This is a **real installation**, not a simple portable EXE copy.
-
-The installed PisoNet client should:
-
-- Be installed into a protected/controlled installation directory.
-- Not be casually removable by simply deleting the main EXE.
-- Have a dedicated **PisoNet Remover/Uninstaller** for normal removal.
-- Keep the installation, auto-start, firewall rule, and updater components managed together.
-- The remover/uninstaller will be the intended way to completely remove PisoNet.
-
-### Hidden kiosk operation requirement
-
-The final production kiosk client is intended to run quietly in the background while presenting its kiosk interface to the user.
-
-Requirements for the final production build:
-
-- No normal taskbar presence.
-- No normal desktop shortcut unless explicitly needed for administration.
-- The application should not expose unnecessary windows or console windows.
-- Background/service/updater components should operate quietly.
-- The production deployment should minimize casual visibility in normal Windows UI.
-
-**Important:** this is a kiosk/deployment requirement, not a requirement to create malware or evade legitimate security/administration tools. Windows security and legitimate administrator access must remain possible.
-
-Do not implement these hidden/locked installation behaviors yet. They are planned for the installer/production phase.
+The service is responsible for launching the GUI in the active interactive Windows session.
 
 ---
 
-## Milestone 4 — Kiosk Auto-Start
+# 3. Installer
 
-After the first installation, the client should automatically start `PisoNetClient.exe` when Windows starts/logs in.
+The project now uses a compiled installer EXE rather than the old standalone `install.ps1` approach.
 
-Expected behavior:
+Current release components include:
 
 ```
-Install PisoNetSetup.exe once
-        ↓
-Download PisoNetClient.exe
-        ↓
-Register auto-start
-        ↓
-Run client
-        ↓
-Restart Windows
-        ↓
-PisoNetClient starts automatically
-        ↓
-Fullscreen kiosk mode
+SufyanPisoNetTimerInstaller.exe
+SufyanPisoNetTimer.exe
+SufyanPisoNetTimerService.exe
+uninstall_helper.exe
+detail.json
+wallpaper
 ```
 
-The auto-start registration should be managed by the setup/updater, not hardcoded into the application itself.
+The installer handles:
+
+- Installing the application.
+- Installing the Windows Service.
+- Setting service startup to automatic.
+- Starting the service.
+- Creating the required Windows Firewall rules.
+- Installing the required kiosk policies.
+- Copying the client configuration.
+- Installing the application files into the controlled installation directory.
+
+The official uninstaller is handled by `uninstall_helper.exe`.
 
 ---
 
-## Milestone 5 — Test Setup on One Client
+# 4. NodeMCU Single Coin Slot
 
-Use one test client first.
+The current system uses **one physical coin slot**.
 
-Expected result:
+The NodeMCU controls which PC is currently allowed to receive coins.
 
 ```
-PisoNetSetup.exe
-       ↓
-installs PisoNetClient.exe
-       ↓
-creates TCP 5000 firewall rule
-       ↓
-registers auto-start
-       ↓
-runs PisoNetClient.exe
-       ↓
-PisoNet application works
+                 ONE COIN SLOT
+                      │
+                      ▼
+                   NodeMCU
+                      │
+             ACTIVE PC = PCx
+                      │
+                      ▼
+                Selected PC
 ```
 
-Test a Windows restart and confirm the client starts automatically.
+Only one PC can own the coin slot at a time.
+
+This prevents multiple PCs from receiving the same physical coin input.
 
 ---
 
-## Milestone 6 — GitHub Automatic Application Updates
+# Coin Flow
 
-After the initial installation and auto-start work, add automatic update checking.
-
-Example:
-
-```
-Client version: 1.0.0
-
-GitHub:
-version: 1.0.1
-
-        ↓
-
-New version detected
-        ↓
-Download new PisoNetClient.exe
-        ↓
-Stop old client
-        ↓
-Start new client
-```
-
-Client PCs update automatically while retaining their auto-start configuration.
-
----
-
-## Milestone 7 — NodeMCU Coin Integration
-
-After the standalone PisoNet client and updater are stable, integrate the NodeMCU coin controller.
-
-Expected flow:
+Current working concept:
 
 ```
 Physical Coin
      ↓
 NodeMCU
      ↓
-COIN:10
+Active PC
      ↓
-PisoNetClient
+PisoNetTimer.exe
      ↓
-+10 minutes
+Time added to PC
 ```
 
-The manual **INSERT COIN** button remains available for testing.
+The NodeMCU handles the physical coin input and active-PC ownership.
 
-NodeMCU will remain the coin-control device and will manage which PC is currently active.
+The Python client handles the time calculation and sends the resulting command through TCP.
+
+Example:
+
+```
+PC2:+18
+```
+
+This means PC2 receives 18 minutes.
 
 ---
 
-# PisoNet Client Network Architecture
+# NodeMCU Communication
 
-The PisoNet client TCP server on **port 5000 is intended to remain ON/listening continuously** while the client is running.
-
-This is separate from whether that PC is currently receiving coins.
+NodeMCU listens on:
 
 ```
-PisoNetClient
-     │
-     └── TCP Server :5000
-             │
-             ├── NodeMCU coin messages
-             ├── Phone/admin commands
-             └── Future control commands
+TCP 5001
 ```
 
-This allows a phone or another authorized controller on the LAN to send commands even when the client is not currently receiving coins.
+The client communicates with NodeMCU using short-lived TCP connections.
 
-Examples of the intended command channel:
+The important commands are:
+
+```
+REQUEST|PC2
+RELEASE|PC2
+```
+
+When a PC successfully requests the coin slot:
+
+```
+PC2 → NodeMCU
+REQUEST|PC2
+
+NodeMCU
+ACTIVE = PC2
+GPIO14 = HIGH
+```
+
+When the PC releases it:
+
+```
+PC2 → NodeMCU
+RELEASE|PC2
+
+NodeMCU
+ACTIVE = NONE
+GPIO14 = LOW
+```
+
+---
+
+# Coin Batching
+
+Coin pulses are not immediately sent one-by-one to the client.
+
+The current client uses:
+
+- Approximately **50 ms debounce** between accepted pulses.
+- A **1-second batching window** after the latest accepted coin.
+- All coins inserted during the batch are converted into one time command.
+
+Example:
+
+```
+6 accepted pulses
+×
+3 minutes per pulse
+=
+18 minutes
+```
+
+Then the client sends:
+
+```
+PC2:+18
+```
+
+The connection is closed after the transaction.
+
+This avoids maintaining an unnecessary persistent NodeMCU control connection.
+
+---
+
+# Client TCP Port 5000
+
+PisoNetTimer listens continuously on:
+
+```
+TCP 5000
+```
+
+This is the normal command channel for an individual PC.
+
+Supported per-PC commands:
 
 ```
 PC1:+10
-PC1:-10
+PC1:-5
+PC1:shutdown
+PC1:restart
+PC1:uninstall
 ```
 
-The exact phone/API authentication and command-security design will be handled later.
+### Important protocol rule
 
-The TCP listener should therefore **not** be turned off simply because the user pressed STOP RECEIVING or because the NodeMCU coinslot is idle.
+The time command format is:
+
+```
+PC1:+10
+```
+
+**Do not change it to:**
+
+```
+PC1:10
+```
+
+The `+` is part of the protocol and must remain because the mobile controller also uses this format.
+
+The old `:admin`, `:admin:`, `opentime`, `closetime`, and `latesttime` command formats are no longer part of the current protocol.
 
 ---
 
-# NodeMCU Architecture
+# ALL-PC Broadcast Commands
 
-NodeMCU listens on **TCP 5001**.
+The current system also supports commands intended for all PisoNet clients.
 
-Each PisoNet client listens on **TCP 5000**.
-
-```
-PC → NodeMCU :5001
-       REQUEST
-          ↓
-NodeMCU locks one active PC
-          ↓
-GPIO14 HIGH
-          ↓
-Coin detected on GPIO12
-          ↓
-NodeMCU → active PC :5000
-          COIN:10
-```
-
-Only one PC may be active for coin receiving at a time.
-
-The NodeMCU remains the final authority for the active-PC lock.
-
-When the active PC releases:
+Broadcast port:
 
 ```
-PC → NodeMCU :5001
-       RELEASE
-          ↓
-ACTIVE = NONE
-          ↓
-GPIO14 LOW
+UDP 5051
 ```
 
-The NodeMCU coin-slot idle timeout is independent of the active-PC lock:
+Supported commands:
 
-- No coin for 10 seconds → GPIO14 LOW.
-- Active PC ownership remains.
-- A new coin from the active PC can turn GPIO14 HIGH again and reset the timer.
-- If no PC is active, coin pulses are ignored.
+```
+all:+10
+all:-5
+all:shutdown
+all:restart
+```
+
+The Android/mobile controller can send these commands through UDP broadcast.
+
+There is no response/acknowledgement mechanism for the UDP broadcast protocol.
 
 ---
 
-# GitHub Release Structure
+# Mobile Controller
 
-Intended structure:
+The Android controller communicates directly with the PisoNet clients.
+
+## Individual PC
+
+Uses:
 
 ```
-PyGit/
-└── pc/
-    └── client/
-        ├── setup.py
-        ├── control.json
-        ├── PisoNetTimer.py
-        └── releases/
-            └── PisoNetClient.exe
+TCP 5000
 ```
+
+Examples:
+
+```
+PC1:+10
+PC1:-5
+PC1:shutdown
+PC1:restart
+PC1:uninstall
+```
+
+## All PCs
+
+Uses:
+
+```
+UDP 5051
+```
+
+Examples:
+
+```
+all:+10
+all:-5
+all:shutdown
+all:restart
+```
+
+The mobile controller must remain compatible with the current PisoNetTimer protocol.
 
 ---
 
-# control.json
+# Current Network Ports
 
-The updater will use a small control file to identify the current release.
+| Component | Protocol | Port | Purpose |
+|---|---:|---:|---|
+| PisoNetTimer | TCP | 5000 | PC commands / time commands |
+| NodeMCU | TCP | 5001 | REQUEST / RELEASE / coin control |
+| PisoNetTimer | UDP | 5051 | ALL-PC broadcast commands |
+
+---
+
+# Client Time Handling
+
+The client maintains the countdown locally.
+
+When time is added:
+
+```
+PC1:+10
+```
+
+the client's remaining time increases by the requested number of minutes.
+
+When time is deducted:
+
+```
+PC1:-5
+```
+
+the client's remaining time decreases.
+
+The client also retains:
+
+- NTP time checking.
+- Time-tampering protection.
+- Shop closing-time checking.
+- Recovery-file support.
+- Google Sheet logging.
+
+---
+
+# Shop Configuration
+
+Each PC has its own configuration in:
+
+```
+sufyan/detail.json
+```
 
 Example:
 
 ```json
 {
-  "version": "1.0.0",
-  "app": "PisoNetClient.exe"
+  "pisonetName": "Sufyan Pisonet",
+  "PcName": "PC2",
+  "time_open": "06:00",
+  "time_close": "22:30",
+  "dev_btn": true,
+  "RECOVERY_FILE": "E:/recovery.json"
 }
 ```
 
----
+The recovery file can be located on an external drive/path configured by the PC.
 
-# Development Workflow
-
-```
-1. Edit PisoNetTimer.py
-2. Test locally
-3. Build PisoNetClient.exe
-4. Test the EXE
-5. Update control.json
-6. Push release to GitHub
-7. Client PyGit updater detects the new version
-8. Client downloads and runs the new EXE
-```
-
-The developer should not manually edit or copy application files on every client PC.
+The configured recovery file should not be deleted simply because the application is uninstalled.
 
 ---
 
-# Important Rules
+# GUI / Kiosk
 
-- Keep existing PisoNet functionality unless a change is explicitly requested.
-- **INSERT COIN must remain available for manual testing.**
-- Client deployment uses the compiled EXE, not raw Python source.
-- Client PCs should not require manual Python module installation.
-- Normal application updates come from GitHub.
-- Do not require Git on client PCs.
-- Do not require `git pull` on client PCs.
-- Keep the updater simple and stable.
-- Test every release on one client before wider deployment.
-- NodeMCU integration comes after the standalone EXE and updater are stable.
-- NodeMCU Wi-Fi credentials must never be committed to GitHub.
-- PisoNet client TCP port **5000 should remain listening while the client is running**, so authorized phone/admin commands can reach it.
-- The final installer/remover must manage installation, auto-start, firewall configuration, and application files as one deployment.
-- Do not implement the hidden production-installation behavior until the installer phase is explicitly started.
+The current GUI is already considered working and should not be changed casually.
+
+Important existing UI behavior:
+
+- PC name badge.
+- Shop name badge.
+- Current shop time.
+- Large INSERT COIN button.
+- Small INSERT COIN button.
+- Remaining-time display.
+- Countdown warning.
+- Fullscreen kiosk mode.
+- Window/taskbar hiding behavior.
+- Keyboard restrictions.
+- Shop closing behavior.
+
+**Do not redesign the existing UI unless explicitly requested.**
+
+---
+
+# PyGit Role
+
+PyGit is the project's remote-update/deployment concept.
+
+The important goal remains:
+
+> Install the system once on a client PC, then distribute future application updates through GitHub instead of manually copying files to every PC.
+
+The deployed client uses the compiled EXE rather than requiring the raw Python source.
+
+The development workflow is:
+
+```
+Edit source
+   ↓
+Test locally
+   ↓
+Build EXE
+   ↓
+Test EXE
+   ↓
+Push release to GitHub
+   ↓
+Deploy/update clients
+```
+
+---
+
+# Current Release Build
+
+The release build is generated using:
+
+```
+build_release.ps1
+```
+
+It builds:
+
+```
+SufyanPisoNetTimer.exe
+SufyanPisoNetTimerService.exe
+uninstall_helper.exe
+SufyanPisoNetTimerInstaller.exe
+```
+
+The installer packages the required components into the deployment EXE.
+
+---
+
+# Current Project Milestones
+
+## Completed
+
+- PyGit live-update concept tested.
+- PisoNetTimer cleaned and stabilized.
+- Compiled PisoNetTimer EXE working.
+- Client PCs can already run the PisoNet application.
+- Players can already use the PCs normally.
+- Single physical coin slot working through NodeMCU.
+- NodeMCU active-PC locking implemented.
+- NodeMCU REQUEST / RELEASE communication implemented.
+- Coin debounce implemented.
+- Coin batching implemented.
+- Client TCP 5000 implemented.
+- ALL-PC UDP 5051 broadcast implemented.
+- Android/mobile command protocol aligned with current client protocol.
+- Windows Service implemented.
+- Automatic Windows Service startup implemented.
+- Interactive GUI launch through the Windows Service implemented.
+- Installer EXE implemented.
+- Uninstaller helper implemented.
+- Firewall setup implemented.
+- Kiosk policies implemented.
+- Google Sheet logging retained.
+- NTP/time-tampering protection retained.
+- Configurable shop closing time retained.
+- External recovery-file support retained.
 
 ---
 
 # Current Status
 
-### Completed
-- PyGit live-update concept tested successfully.
-- PisoNetTimer identified as the main PisoNet client application.
-- Deployment milestone plan established.
-- Milestone 1 cleanup pushed.
-- Basic fullscreen kiosk UI added.
-- **INSERT COIN** manual/test button added.
-- NodeMCU coin-control architecture established.
-- NodeMCU single-active-PC lock established.
-- Client TCP port 5000 established as an always-listening command/receiver channel.
+### WORKING
 
-### Current milestone
-**Milestone 2 — Build and test PisoNetClient.exe**
+The core PisoNet system is operational.
 
-### Next goal
-Build and test the standalone EXE. After that, create the simple `setup.py` and package it as `PisoNetSetup.exe` for one-client testing.
+The most important current result is:
+
+```
+ONE COIN SLOT
+      ↓
+NODEMCU
+      ↓
+ACTIVE PC
+      ↓
+PisoNetTimer.exe
+      ↓
+PLAYER RECEIVES TIME
+      ↓
+PLAYER CAN PLAY
+```
+
+Multiple client PCs can be deployed while the NodeMCU maintains ownership of the single physical coin slot.
+
+The compiled EXE is already functioning on the client side.
+
+---
+
+# Current Development Priority
+
+The project is no longer focused on proving whether the basic client works.
+
+The basic client is already working.
+
+Future work should focus on:
+
+1. Deployment reliability.
+2. Installer reliability.
+3. Service reliability.
+4. GitHub release/update reliability.
+5. Mobile controller reliability.
+6. NodeMCU reliability.
+7. Recovery and fault handling.
+8. Production testing across multiple PCs.
+9. Keeping the existing working UI and protocol stable.
+
+---
+
+# Important Development Rules
+
+- Preserve working functionality unless a change is explicitly requested.
+- Do not casually redesign the working GUI.
+- Keep the time protocol exactly compatible with the mobile controller.
+- **Use `PC1:+10`, not `PC1:10`.**
+- Do not reintroduce the removed admin command protocol.
+- Do not reintroduce obsolete `opentime`, `closetime`, or `latesttime` commands unless explicitly requested.
+- Keep TCP 5000 available while the client is running.
+- Use UDP 5051 for ALL-PC broadcast commands.
+- Keep NodeMCU communication on TCP 5001.
+- Do not maintain unnecessary persistent NodeMCU control connections.
+- Keep the single-coin-slot active-PC lock.
+- Do not commit Wi-Fi credentials or other secrets to GitHub.
+- Do not remove configured external recovery files during uninstall.
+- Test release builds before deploying them widely.
+- Treat the current working client as the baseline.
+- Avoid changing multiple unrelated components when fixing one issue.
+
+---
+
+# Source of Truth
+
+The GitHub repository is:
+
+```
+royalguard14/PyGit
+```
+
+The current working PisoNetTimer client is:
+
+```
+pc/client/PisoNetTimer.py
+```
+
+The Windows Service is:
+
+```
+pc/client/service.py
+```
+
+The release builder is:
+
+```
+pc/client/build_release.ps1
+```
+
+The installer is:
+
+```
+pc/client/installer.py
+```
+
+The uninstaller helper is:
+
+```
+pc/client/uninstall_helper.py
+```
+
+The PC configuration is:
+
+```
+pc/client/sufyan/detail.json
+```
+
+This document should be updated whenever the actual working architecture changes.
