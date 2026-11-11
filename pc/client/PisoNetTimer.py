@@ -1,4 +1,4 @@
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests, subprocess
@@ -36,7 +36,7 @@ COIN_REQUEST_TIMEOUT = 3.0
 IP_BASE = 100
 MAX_PC = 10
 
-GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzxrlmAv0Sr7KWMIgLVi4RoA8CnLv7WxHUfgzfoF0IYVmzacJaIe7OBPrxn0zCXtYCp/exec"
+GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfcdRSOKc52vxjNVnYuNSZVZOUWkrYTEtMnZbrXp5nEqdDT-wd4f37GUxl5ojXA1I9/exec"
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 # Shop hours are loaded from sufyan/detail.json below.
@@ -51,15 +51,87 @@ def save_state():
     except:
         pass
 
-def load_state():
+def write_recovery_file(seconds):
+    """Atomically write the local recovery countdown cache."""
+    recovery_dir = os.path.dirname(RECOVERY_FILE)
+    if recovery_dir:
+        os.makedirs(recovery_dir, exist_ok=True)
+
+    temp_file = RECOVERY_FILE + ".tmp"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump({"remaining": int(seconds)}, f)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(temp_file, RECOVERY_FILE)
+
+
+def load_online_recovery():
+    """Start from zero, then load this PC's read-only recovery value from Google Sheets."""
     global remaining_seconds
-    if os.path.exists(RECOVERY_FILE):
+
+    # Never restore an old local value when the online lookup fails.
+    remaining_seconds = 0
+
+    try:
+        write_recovery_file(0)
+    except Exception as e:
+        write_log(
+            f"Unable to reset local recovery file: {type(e).__name__}: {e}",
+            "ERROR"
+        )
+        return
+
+    pc_name = str(PC_NAME).strip().upper()
+    if not re.fullmatch(r"PC[1-5]", pc_name):
+        write_log(f"Invalid PcName for online recovery: {PC_NAME!r}", "ERROR")
+        return
+
+    try:
+        response = requests.get(
+            GOOGLE_SCRIPT_URL,
+            params={"action": "recovery", "pc": pc_name},
+            timeout=(5, 10)
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        if result.get("status") != "OK":
+            raise ValueError(result.get("message", "Google Apps Script returned an error"))
+
+        if str(result.get("pc", "")).strip().upper() != pc_name:
+            raise ValueError("Google Apps Script returned a different PC name")
+
+        recovery_value = result.get("recovery", 0)
+        if isinstance(recovery_value, bool):
+            raise ValueError("Invalid recovery value")
+
+        recovery_number = float(recovery_value)
+        if not recovery_number.is_integer() or recovery_number < 0:
+            raise ValueError(f"Invalid recovery seconds: {recovery_value!r}")
+
+        recovery_seconds = int(recovery_number)
+
+        # Persist successfully before making the time active in memory.
+        write_recovery_file(recovery_seconds)
+        with lock:
+            remaining_seconds = recovery_seconds
+
+        write_log(
+            f"Online recovery loaded: pc={pc_name}; remaining={recovery_seconds}s"
+        )
+
+    except Exception as e:
+        # Keep both memory and local cache at zero on lookup/validation failure.
+        remaining_seconds = 0
         try:
-            with open(RECOVERY_FILE) as f:
-                data = json.load(f)
-                remaining_seconds = data.get("remaining", 0)
-        except:
-            remaining_seconds = 0
+            write_recovery_file(0)
+        except Exception:
+            pass
+        write_log(
+            f"Online recovery failed; starting at 0: {type(e).__name__}: {e}",
+            "WARN"
+        )
 
 # ================= SINGLE INSTANCE =================
 _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1310,7 +1382,7 @@ def server():
             break
 
 # ================= RECOVERY LOAD =================
-load_state()
+load_online_recovery()
 
 # ================= START =================
 threading.Thread(target=server, daemon=True).start()
