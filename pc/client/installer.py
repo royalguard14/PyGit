@@ -59,7 +59,12 @@ def install_service():
     service_exe = os.path.join(INSTALL_DIR, SERVICE_EXE)
     run_sc(["stop", SERVICE_NAME], check=False)
     run_sc(["delete", SERVICE_NAME], check=False)
-    time.sleep(2)
+    # SCM deletion can be asynchronous; wait until the old registration is gone.
+    for _ in range(10):
+        query = run_sc(["query", SERVICE_NAME], check=False)
+        if query.returncode != 0:
+            break
+        time.sleep(1)
 
     subprocess.run(
         [service_exe, "--startup", "auto", "install"],
