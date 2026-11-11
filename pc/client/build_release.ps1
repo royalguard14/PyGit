@@ -3,23 +3,36 @@ Set-Location $PSScriptRoot
 
 python -m pip install --upgrade pyinstaller pywin32
 
-$dist = Join-Path $PSScriptRoot "release"
-if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
-New-Item -ItemType Directory -Path $dist | Out-Null
+$release = Join-Path $PSScriptRoot "release"
+$payload = Join-Path $PSScriptRoot ".installer_payload"
+$work = Join-Path $PSScriptRoot ".build_work"
 
-python -m PyInstaller --noconfirm --clean --onefile --noconsole --name "SufyanPisoNetTimer" --hidden-import=win32timezone "PisoNetTimer.py"
-python -m PyInstaller --noconfirm --clean --onefile --console --name "SufyanPisoNetTimerService" --hidden-import=servicemanager --hidden-import=win32timezone "service.py"
-python -m PyInstaller --noconfirm --clean --onefile --noconsole --name "uninstall_helper" "uninstall_helper.py"
+# The release folder contains only the single installer distributed to clients.
+foreach ($path in @($release, $payload, $work)) {
+    if (Test-Path $path) { Remove-Item $path -Recurse -Force }
+}
+New-Item -ItemType Directory -Path $release, $payload, $work | Out-Null
 
-Copy-Item "dist\SufyanPisoNetTimer.exe" $dist
-Copy-Item "dist\SufyanPisoNetTimerService.exe" $dist
-Copy-Item "dist\uninstall_helper.exe" $dist
-Copy-Item "sufyan\*" $dist -Force
+try {
+    python -m PyInstaller --noconfirm --clean --onefile --noconsole --name "SufyanPisoNetTimer" --distpath $payload --workpath (Join-Path $work "app") --specpath $work --hidden-import=win32timezone "PisoNetTimer.py"
+    if ($LASTEXITCODE -ne 0) { throw "Failed to build PisoNetTimer application." }
 
-python -m PyInstaller --noconfirm --clean --onefile --console --name "SufyanPisoNetTimerInstaller" --add-binary "$dist\SufyanPisoNetTimer.exe;." --add-binary "$dist\SufyanPisoNetTimerService.exe;." --add-binary "$dist\uninstall_helper.exe;." --add-data "$dist\detail.json;." --add-data "$dist\wallpapersden.com_valorant-hd-gaming_1920x1080.jpg;." "installer.py"
+    python -m PyInstaller --noconfirm --clean --onefile --console --name "SufyanPisoNetTimerService" --distpath $payload --workpath (Join-Path $work "service") --specpath $work --hidden-import=servicemanager --hidden-import=win32timezone "service.py"
+    if ($LASTEXITCODE -ne 0) { throw "Failed to build PisoNetTimer Windows service." }
 
-Copy-Item "dist\SufyanPisoNetTimerInstaller.exe" $dist
+    python -m PyInstaller --noconfirm --clean --onefile --noconsole --name "uninstall_helper" --distpath $payload --workpath (Join-Path $work "uninstaller") --specpath $work "uninstall_helper.py"
+    if ($LASTEXITCODE -ne 0) { throw "Failed to build uninstaller helper." }
 
-Write-Host ""
-Write-Host "Release files prepared in: $dist"
-Write-Host "Installer: $dist\SufyanPisoNetTimerInstaller.exe"
+    Copy-Item "sufyan\*" $payload -Force
+
+    python -m PyInstaller --noconfirm --clean --onefile --noconsole --uac-admin --name "PisoNetSetup" --distpath $release --workpath (Join-Path $work "installer") --specpath $work --add-binary "$payload\SufyanPisoNetTimer.exe;." --add-binary "$payload\SufyanPisoNetTimerService.exe;." --add-binary "$payload\uninstall_helper.exe;." --add-data "$payload\detail.json;." --add-data "$payload\wallpapersden.com_valorant-hd-gaming_1920x1080.jpg;." "installer.py"
+    if ($LASTEXITCODE -ne 0) { throw "Failed to build PisoNetSetup.exe." }
+
+    Write-Host ""
+    Write-Host "Build completed. Final release contains one file:"
+    Write-Host (Join-Path $release "PisoNetSetup.exe")
+}
+finally {
+    if (Test-Path $payload) { Remove-Item $payload -Recurse -Force }
+    if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+}
