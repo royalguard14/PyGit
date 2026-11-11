@@ -20,11 +20,11 @@ def run(cmd):
 
 def remove_kiosk_policies():
     paths = [
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer",
          ["NoClose", "NoLogoff", "NoSwitchUser", "NoStartMenuMorePrograms",
           "NoStartMenuMyGames", "NoStartMenuMyMusic", "NoStartMenuMyPictures",
           "NoStartMenuMyVideos", "NoRecentDocsMenu", "NoRecentDocsHistory", "NoWinKeys"]),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
          ["DisableTaskMgr", "DisableLockWorkstation", "DisableChangePassword"]),
     ]
     for hive, path, names in paths:
