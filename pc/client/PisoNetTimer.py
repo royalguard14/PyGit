@@ -1,4 +1,4 @@
-VERSION = "1.4.3"
+VERSION = "1.4.4"
 
 # ================= IMPORTS =================
 import socket, sys, threading, re, tkinter as tk, time, os, json, requests, subprocess
@@ -167,6 +167,8 @@ remaining_time_window = None
 remaining_insert_coin_button = None
 remaining_timer_blink_state = False
 STATUS_FLASH_MS = 2500
+overlay_clock_label = None
+_last_overlay_reason = None
 
 # ================= TIME =================
 def get_ntp_time():
@@ -842,6 +844,29 @@ def show_overlay():
     overlay.overrideredirect(True)
     overlay.attributes("-topmost", True)
 
+    # Live Philippine clock at the top-center of the overlay.
+    global overlay_clock_label
+    overlay_clock_label = tk.Label(
+        overlay,
+        text="",
+        font=("Arial", 30, "bold"),
+        bg="black",
+        fg="white",
+        padx=18,
+        pady=6
+    )
+    overlay_clock_label.place(relx=0.5, rely=0.025, anchor="n")
+
+    def update_overlay_clock():
+        if not _widget_alive(overlay_clock_label):
+            return
+        overlay_clock_label.config(
+            text=datetime.now(TIMEZONE).strftime("%I:%M:%S %p")
+        )
+        overlay.after(1000, update_overlay_clock)
+
+    update_overlay_clock()
+
     canvas = tk.Canvas(overlay)
     canvas.pack(fill="both", expand=True)
 
@@ -1066,11 +1091,13 @@ def show_overlay():
 
 
 def hide_overlay():
-    global overlay, overlay_active
+    global overlay, overlay_active, overlay_clock_label
 
     if overlay:
         overlay.destroy()
 
+    overlay = None
+    overlay_clock_label = None
     overlay_active = False
     unlock_input()
     unmute()
@@ -1396,10 +1423,29 @@ root = tk.Tk()
 root.withdraw()
 
 def update():
+    global _last_overlay_reason
+
     status = _cached_shop_status
 
     with lock:
-        zero = remaining_seconds <= 0
+        current_remaining = max(0, int(remaining_seconds))
+        zero = current_remaining <= 0
+
+    if status == "TAMPERED":
+        overlay_reason = "TIME_TAMPERED"
+    elif status == "CLOSED_AFTER":
+        overlay_reason = "SHOP_CLOSED"
+    elif zero:
+        overlay_reason = "NO_REMAINING_TIME"
+    else:
+        overlay_reason = "ACTIVE"
+
+    if overlay_reason != _last_overlay_reason:
+        write_log(
+            f"Overlay state changed: {overlay_reason}; "
+            f"shop_status={status}; remaining={current_remaining}s"
+        )
+        _last_overlay_reason = overlay_reason
 
     if status != "OPEN" or zero:
         # Overlay has no remaining-time display.
